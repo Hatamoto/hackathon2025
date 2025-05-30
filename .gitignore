@@ -1,0 +1,4 @@
+.venv/
+src/raw_articles/
+
+vtt*.txt
