@@ -73,4 +73,4 @@ def build_graph_from_innovations(json_path="structured_innovations.json", glossa
     plt.title("🧠 VTT Innovation Collaboration Network")
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
-    plt.show()
+    # plt.show()
