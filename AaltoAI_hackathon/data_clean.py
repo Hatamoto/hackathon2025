@@ -8,6 +8,7 @@
 # - `Orbis ID`, also `VAT id` is a unique identifier for organizations, later used to merge different alias of the same organization to one unique id
 
 # 1. original source dataframe
+import re
 import matplotlib.pyplot as plt
 import networkx as nx
 import hashlib
@@ -112,48 +113,6 @@ for doc in graph_doc:
     for relationship in doc.relationships:
         print(
             f"- {relationship.source} ({relationship.source_type}) - {relationship.type} -> {relationship.target} ({relationship.target_type})    :    description: {relationship.properties['description']}")
-
-
-# #### Name ambiguity resolution
-# - within the source text, variation/ alias of organization name lead to ambiguity
-# - this ambiguity is partly solved by mapping organization to a unique identifier: `VAT ID`
-# - the dict: `entity_glossary` stores Ids and Alias as key-value pairs
-
-
-# 3. load entity glossary
-
-with open("data/entity_glossary/entity_glossary.json", "r", encoding="utf-8") as f:
-    entity_glossary = json.load(f)
-
-# Flatten structure: extract all aliases for each VAT ID
-rows = []
-
-for vat_id, info in entity_glossary.items():
-    aliases = info.get("alias", [])
-    for alias in aliases:
-        rows.append({
-            "vat_id": vat_id,
-            "alias": alias.strip()
-        })
-
-# Create DataFrame and normalized alias column
-glossary_df = pd.DataFrame(rows)
-glossary_df["alias_norm"] = glossary_df["alias"].str.lower().str.strip()
-
-# Save normalized glossary for inspection
-glossary_df.to_csv("normalized_entity_glossary.csv", index=False)
-
-# Export to grouped JSON
-grouped_json = [
-    {"vat_id": vat_id, "aliases": aliases}
-    for vat_id, aliases in entity_glossary.items()
-]
-
-with open("normalized_entity_glossary.json", "w", encoding="utf-8") as f:
-    json.dump(grouped_json, f, indent=2, ensure_ascii=False)
-
-print(
-    f"✅ Exported glossary to normalized_entity_glossary.csv and normalized_entity_glossary.json with {len(entity_glossary)} unique VAT IDs.")
 
 
 # 2.3 loading example of custom graph document
@@ -336,7 +295,6 @@ def initialize_llm(deployment_model: str, config_file_path: str = 'data/azure_co
     )
 
 
-# # initialize
 # model4om = initialize_llm(deployment_model='gpt-4o-mini',
 #                           config_file_path='data/keys/azure_config.json')
 model41m = initialize_llm(deployment_model='gpt-4.1-mini',
@@ -344,15 +302,110 @@ model41m = initialize_llm(deployment_model='gpt-4.1-mini',
 # # model41 = initialize_llm(deployment_model='gpt-4.1',
 # #                         config_file_path='data/keys/azure_config.json')
 
-# # example use:
-prompt = 'Say hello to the world!'
-
-
 print(f"✅ Successfully initialized Azure OpenAI model: {model41m.model_name}")
 
-# model4om.invoke(prompt).content
-# model41m.invoke(prompt).content
-# model41.invoke(prompt).content
+
+# #### Name ambiguity resolution
+# - within the source text, variation/ alias of organization name lead to ambiguity
+# - this ambiguity is partly solved by mapping organization to a unique identifier: `VAT ID`
+# - the dict: `entity_glossary` stores Ids and Alias as key-value pairs
+
+
+def resolve_temp_vat_ids(entity_glossary, model):
+
+    change_log = []
+    temp_keys = [k for k in entity_glossary if k.startswith("temp")]
+
+    for temp_id in tqdm(temp_keys, desc="🔁 Resolving temp VAT IDs (domestic + international)"):
+        aliases_dict = entity_glossary[temp_id]
+        aliases = aliases_dict.get("alias", [])
+        alias_list = ', '.join(aliases)
+
+        prompt = (
+            f"The following names are aliases or company names possibly from Finland or abroad: {alias_list}. "
+            f"If you can identify the company, provide the official VAT ID or registration number, "
+            f"preferably including country code (e.g., FI12345678, DE999999999, US-EIN format, etc.). "
+            f"Only respond with the best guess for the VAT or registration ID, nothing else."
+        )
+
+        try:
+            response = model.invoke(prompt).content.strip()
+
+            # Match any likely VAT or company ID with country prefix
+            match = re.search(r'\b[A-Z]{2}\d{8,12}\b', response)
+            if match:
+                new_vat_id = match.group(0)
+                if new_vat_id in entity_glossary:
+                    existing_aliases = entity_glossary[new_vat_id].setdefault(
+                        "alias", [])
+                    entity_glossary[new_vat_id]["alias"] = list(
+                        set(existing_aliases + aliases))
+                else:
+                    entity_glossary[new_vat_id] = {"alias": aliases}
+                del entity_glossary[temp_id]
+                change_log.append({
+                    "replaced": temp_id,
+                    "new_vat_id": new_vat_id,
+                    "aliases": aliases,
+                    "response": response
+                })
+            else:
+                change_log.append({
+                    "replaced": temp_id,
+                    "new_vat_id": None,
+                    "aliases": aliases,
+                    "response": response,
+                    "note": "❌ No VAT ID matched"
+                })
+
+        except Exception as e:
+            change_log.append({
+                "replaced": temp_id,
+                "new_vat_id": None,
+                "aliases": aliases,
+                "error": str(e)
+            })
+
+    return entity_glossary, change_log
+
+
+# 5. Load entity glossary and try to resolve organization vat ids
+
+
+with open("data/entity_glossary/entity_glossary.json", "r", encoding="utf-8") as f:
+    entity_glossary = json.load(f)
+
+resolved_glossary, changes = resolve_temp_vat_ids(entity_glossary, model41m)
+
+# Flatten structure: extract all aliases for each VAT ID
+rows = []
+
+for vat_id, info in resolved_glossary.items():
+    aliases = info.get("alias", [])
+    for alias in aliases:
+        rows.append({
+            "vat_id": vat_id,
+            "alias": alias.strip()
+        })
+
+# Create DataFrame and normalized alias column
+glossary_df = pd.DataFrame(rows)
+glossary_df["alias_norm"] = glossary_df["alias"].str.lower().str.strip()
+
+# Save normalized glossary for inspection
+glossary_df.to_csv("normalized_entity_glossary.csv", index=False)
+
+# Export to grouped JSON
+grouped_json = [
+    {"vat_id": vat_id, "aliases": aliases}
+    for vat_id, aliases in entity_glossary.items()
+]
+
+with open("normalized_entity_glossary.json", "w", encoding="utf-8") as f:
+    json.dump(grouped_json, f, indent=2, ensure_ascii=False)
+
+print(
+    f"✅ Exported glossary to normalized_entity_glossary.csv and normalized_entity_glossary.json with {len(entity_glossary)} unique VAT IDs.")
 
 # Extract innovation-centric entries from both DataFrames
 all_df = pd.concat(
