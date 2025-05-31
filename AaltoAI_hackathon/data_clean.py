@@ -412,18 +412,24 @@ output = []
 
 for innovation_id, group in grouped:
 
+    # print(f"🔎 Innovation ID: {innovation_id}")
+    # print(group.head())         # Shows the first few rows
+    # print(group.columns.tolist())  # Lists all column names
+    # print(group.dtypes)         # Shows data types of each column
+    # print("-" * 50)
     # This gives partner descriptions, not vat ids or names only
-    # participants = list(group[group["partner_type"] ==
-    #                    "Organization"]["partner_desc"].dropna().unique())
-    participants = []
+    participants = list(group[group["partner_type"] ==
+                        "Organization"]["partner_id"].dropna().unique())
+    # participants = []
 
     # Filter to organizations
-    org_partners = group[group["partner_type"] == "Organization"]
+    # org_partners = group[group["partner_type"] == "Organization"]
 
-    for _, row in org_partners.iterrows():
-        alias = row["partner_desc"]
-        vat_id = alias_to_vat.get(alias.lower(), "[unresolved]")
-        participants.append([vat_id, alias, row["relationship"]])
+    # for _, row in org_partners.iterrows():
+    #     alias = row["partner_desc"]
+    #     vat_id = alias_to_vat.get(alias.lower(), "[unresolved]")
+    #     participants.append([vat_id, alias, row["relationship"]])
+
     # raw_partners = group[group["partner_type"] ==
     #                      "Organization"]["partner_desc"].dropna().unique()
 
