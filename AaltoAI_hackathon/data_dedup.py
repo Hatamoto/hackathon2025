@@ -32,13 +32,9 @@ def initialize_llm(deployment_model: str, config_file_path: str = 'data/azure_co
 
 # Function to detect and filter out irrelevant content
 def filter_text(text):
-    # Strip extra spaces and newlines
     text = re.sub(r'\s+', ' ', text).strip()
-    
-    # Remove any text that is too short or irrelevant
     if len(text) < 80:  # Skip short content that might just be noise
         return None
-    
     return text
 
 # Function to check if two descriptions are duplicates using AI
@@ -55,9 +51,9 @@ def check_if_duplicate(description_1, description_2, model):
         print(f"Error during AI comparison: {e}")
         return False
 
-# Function to process descriptions in chunks
+# Function to process descriptions in chunks and handle deduplication
 def process_descriptions_in_chunks(data, model, chunk_size=20):
-    deduplicated_data = []
+    filtered_data = []
     seen_texts = []  # List to track descriptions for de-duplication using AI
     innovation_map = {}  # A map to store potential duplicates and their unified innovation_id
     
@@ -79,54 +75,38 @@ def process_descriptions_in_chunks(data, model, chunk_size=20):
                 
                 if filtered_text:
                     is_duplicate = False
-                    for seen_text in seen_texts:
+                    matched_innovation_id = innovation_id  # Default to current innovation_id
+
+                    # Check if this description is a duplicate
+                    for seen_text, seen_id in seen_texts:
                         if check_if_duplicate(filtered_text, seen_text, model):
                             is_duplicate = True
+                            matched_innovation_id = seen_id  # Match the ID of the first seen description
                             break
                     
                     if not is_duplicate:
-                        # If this is a new innovation_id, store the descriptions under it
-                        if innovation_id not in innovation_map:
-                            innovation_map[innovation_id] = {
-                                "innovation_id": innovation_id,
-                                "core_summary": core_summary,
-                                "participants": participants,
-                                "descriptions": []
-                            }
+                        # If it's not a duplicate, add the description with its current innovation_id
+                        seen_texts.append((filtered_text, innovation_id))
+                    else:
+                        # If it's a duplicate, we update the innovation_id to the matched one
+                        innovation_id = matched_innovation_id
 
-                        # Add the description under the innovation_id
-                        innovation_map[innovation_id]["descriptions"].append({
-                            "source": description.get("source"),
-                            "text": filtered_text,
-                            "date": description.get("date", "unknown")
-                        })
-                        seen_texts.append(filtered_text)
+                    # Add the description under the innovation_id
+                    filtered_descriptions.append({
+                        "source": description.get("source"),
+                        "text": filtered_text,
+                        "date": description.get("date", "unknown")
+                    })
 
-    # Convert the innovation_map to a list of deduplicated records
-    deduplicated_data = list(innovation_map.values())
-
-    # Now check for duplicate innovation_id and make sure all the records referring to the same innovation
-    # have the same innovation_id (in case they were slightly different).
-    final_data = []
-    seen_ids = {}  # Used to map variations to a single `innovation_id`
+            if filtered_descriptions:
+                filtered_data.append({
+                    "innovation_id": innovation_id,
+                    "core_summary": core_summary,
+                    "participants": participants,
+                    "descriptions": filtered_descriptions
+                })
     
-    for record in deduplicated_data:
-        innovation_id = record["innovation_id"]
-        
-        # If innovation_id is already present in seen_ids, assign the same innovation_id
-        if innovation_id in seen_ids:
-            final_data.append({
-                "innovation_id": seen_ids[innovation_id],
-                "core_summary": record["core_summary"],
-                "participants": record["participants"],
-                "descriptions": record["descriptions"]
-            })
-        else:
-            # Store the first occurrence of the innovation_id
-            seen_ids[innovation_id] = innovation_id
-            final_data.append(record)
-    
-    return final_data
+    return filtered_data
 
 # Function to merge descriptions for the same innovation_id
 def merge_innovations(filtered_data):
@@ -170,14 +150,14 @@ def main():
         data = json.load(f)
 
     # Process and de-duplicate descriptions in chunks
-    deduplicated_data = process_descriptions_in_chunks(data, model, chunk_size=20)
+    filtered_data = process_descriptions_in_chunks(data, model, chunk_size=20)
 
     # Save the deduplicated data to a new JSON file
     with open(output_file_dedup, 'w', encoding='utf-8') as f:
-        json.dump(deduplicated_data, f, indent=2, ensure_ascii=False)
+        json.dump(filtered_data, f, indent=2, ensure_ascii=False)
 
     # Merge innovations by innovation_id
-    merged_data = merge_innovations(deduplicated_data)
+    merged_data = merge_innovations(filtered_data)
 
     # Save the merged data to a new JSON file
     with open(output_file_merged, 'w', encoding='utf-8') as f:
