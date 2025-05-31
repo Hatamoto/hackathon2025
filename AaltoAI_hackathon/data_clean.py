@@ -11,7 +11,6 @@
 import re
 import matplotlib.pyplot as plt
 import networkx as nx
-import hashlib
 import os
 import sys
 import pickle

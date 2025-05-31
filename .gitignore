@@ -1,12 +1,9 @@
 .venv/
-src/raw_articles/
+data/
 *.zip
 vtt*.txt
 __pycache__/
-data/
-.env
 *.html
-azure_config*.json
 .DS_Store
 output.log
 structured_innovations.json
