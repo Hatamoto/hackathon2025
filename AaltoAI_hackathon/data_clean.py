@@ -118,7 +118,7 @@ for doc in graph_doc:
 # 3. load entity glossary
 entity_glossary = json.load(
     open('data/entity_glossary/entity_glossary.json', 'r', encoding='utf-8'))
-print(entity_glossary.get('FI26473754'))
+print(entity_glossary)
 
 
 # 2.3 loading example of custom graph document
@@ -354,6 +354,14 @@ model41.invoke(prompt).content
 # with open("vtt_structured_innovations.json", "w") as f:
 #     json.dump(structured, f, indent=2)
 
+# Normalize glossary: alias (lowercased) → VAT ID
+alias_to_vat = {}
+for vat_id, aliases in entity_glossary.items():
+    for alias in aliases:
+        alias_to_vat[alias.lower()] = vat_id
+
+print(f"Loaded {len(alias_to_vat)} unique aliases for VAT IDs.")
+
 # Extract innovation-centric entries from both DataFrames
 all_df = pd.concat(
     [df_relationships_comp_url, df_relationships_vtt_domain], ignore_index=True)
@@ -376,7 +384,7 @@ def extract_innovation_group(row):
             "partner_desc": row["target description"],
             "partner_type": row["target type"],
             "relationship": row["relationship type"],
-            "source_text": row["Source Text"][:500],
+            "source_text": row["Source Text"][:5000],
             "source_link": row["Link Source Text"],
         })
     else:
@@ -387,7 +395,7 @@ def extract_innovation_group(row):
             "partner_desc": row["source description"],
             "partner_type": row["source type"],
             "relationship": row["relationship type"],
-            "source_text": row["Source Text"][:500],
+            "source_text": row["Source Text"][:5000],
             "source_link": row["Link Source Text"],
         })
 
@@ -401,8 +409,17 @@ grouped = flat_df.groupby("innovation_id")
 output = []
 
 for innovation_id, group in grouped:
-    participants = list(group[group["partner_type"] ==
-                        "Organization"]["partner_desc"].dropna().unique())
+    raw_partners = group[group["partner_type"] ==
+                         "Organization"]["partner_desc"].dropna().unique()
+
+    participants = []
+    for name in raw_partners:
+        vat_id = alias_to_vat.get(name.lower())
+        if vat_id:
+            participants.append(vat_id)
+        else:
+            participants.append("[unresolved]")
+
     descriptions = group[["source_link", "source_text"]].drop_duplicates().rename(
         columns={"source_link": "source", "source_text": "text"}
     ).to_dict(orient="records")
