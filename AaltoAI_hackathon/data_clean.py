@@ -413,9 +413,17 @@ output = []
 for innovation_id, group in grouped:
 
     # This gives partner descriptions, not vat ids or names only
-    participants = list(group[group["partner_type"] ==
-                        "Organization"]["partner_desc"].dropna().unique())
+    # participants = list(group[group["partner_type"] ==
+    #                    "Organization"]["partner_desc"].dropna().unique())
+    participants = []
 
+    # Filter to organizations
+    org_partners = group[group["partner_type"] == "Organization"]
+
+    for _, row in org_partners.iterrows():
+        alias = row["partner_desc"]
+        vat_id = alias_to_vat.get(alias.lower(), "[unresolved]")
+        participants.append([vat_id, alias, row["relationship"]])
     # raw_partners = group[group["partner_type"] ==
     #                      "Organization"]["partner_desc"].dropna().unique()
 

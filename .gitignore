@@ -8,3 +8,6 @@ data/
 *.html
 azure_config*.json
 .DS_Store
+output.log
+structured_innovations.json
+*.png
