@@ -7,4 +7,7 @@ __pycache__/
 .DS_Store
 output.log
 structured_innovations.json
+normalized_entity_glossary.json
+normalized_entity_glossary.csv
+vat_resolution_log.json
 *.png
