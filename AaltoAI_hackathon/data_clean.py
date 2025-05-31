@@ -411,16 +411,21 @@ grouped = flat_df.groupby("innovation_id")
 output = []
 
 for innovation_id, group in grouped:
-    raw_partners = group[group["partner_type"] ==
-                         "Organization"]["partner_desc"].dropna().unique()
 
-    participants = []
-    for name in raw_partners:
-        vat_id = alias_to_vat.get(name.lower())
-        if vat_id:
-            participants.append(vat_id)
-        else:
-            participants.append("[unresolved]")
+    # This gives partner descriptions, not vat ids or names only
+    participants = list(group[group["partner_type"] ==
+                        "Organization"]["partner_desc"].dropna().unique())
+
+    # raw_partners = group[group["partner_type"] ==
+    #                      "Organization"]["partner_desc"].dropna().unique()
+
+    # participants = []
+    # for name in raw_partners:
+    #     vat_id = alias_to_vat.get(name.lower())
+    #     if vat_id:
+    #         participants.append(vat_id)
+    #     else:
+    #         participants.append("[unresolved]")
 
     descriptions = group[["source_link", "source_text"]].drop_duplicates().rename(
         columns={"source_link": "source", "source_text": "text"}
@@ -440,7 +445,13 @@ with open("structured_innovations.json", "w", encoding="utf-8") as f:
 print(
     f"✅ Saved {len(output)} unique innovation objects to structured_innovations.json")
 
+draw_graph = False  # Set to True if you want to visualize the graph
 
+
+if not draw_graph:
+    sys.exit("Skipping graph visualization. Set draw_graph=True to visualize.")
+
+# Visualize the collaboration network of VTT and its innovations
 # Load your structured JSON
 with open("structured_innovations.json", encoding="utf-8") as f:
     innovations = json.load(f)
