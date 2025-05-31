@@ -312,7 +312,6 @@ print(f"✅ Successfully initialized Azure OpenAI model: {model41m.model_name}")
 
 
 def resolve_temp_vat_ids(entity_glossary, model):
-
     change_log = []
     temp_keys = [k for k in entity_glossary if k.startswith("temp")]
 
@@ -324,15 +323,34 @@ def resolve_temp_vat_ids(entity_glossary, model):
         prompt = (
             f"The following names are aliases or company names possibly from Finland or abroad: {alias_list}. "
             f"If you can identify the company, provide the official VAT ID or registration number, "
-            f"preferably including country code (e.g., FI12345678, DE999999999, US-EIN format, etc.). "
+            f"preferably including country code (e.g., FI12345678, DE999999999, US 12-3456789, CHE-123.456.789, etc.). "
             f"Only respond with the best guess for the VAT or registration ID, nothing else."
         )
 
         try:
             response = model.invoke(prompt).content.strip()
 
-            # Match any likely VAT or company ID with country prefix
-            match = re.search(r'\b[A-Z]{2}\d{8,12}\b', response)
+            # Match broader international company/VAT registration formats
+            match = re.search(
+                r'\b('
+                # e.g., IT02131140589, GB 08892708, NO 938 910 039 MVA
+                r'[A-Z]{2}[-\s]?\d{7,12}([-\s]?\d{1,2})?([-\s]?[A-Z]{2,4})?|'
+                # US EIN: 12-3456789
+                r'\d{2}[-\s]?\d{7}|'
+                # Swiss: CHE-123.456.789
+                r'CHE[-\s]?\d{3}\.\d{3}\.\d{3}|'
+                # UK/DE like: SC123456, DE999999999
+                r'[A-Z]{2,3}\d{6,10}|'
+                # fallback plain numeric
+                r'\d{9,12}'
+                r')\b',
+                response,
+                re.IGNORECASE
+            )
+
+            # Bypass regex for now
+            match = response if response else None
+
             if match:
                 new_vat_id = match.group(0)
                 if new_vat_id in entity_glossary:
@@ -350,12 +368,13 @@ def resolve_temp_vat_ids(entity_glossary, model):
                     "response": response
                 })
             else:
+                # No valid ID matched: keep temp_id
                 change_log.append({
                     "replaced": temp_id,
                     "new_vat_id": None,
                     "aliases": aliases,
                     "response": response,
-                    "note": "❌ No VAT ID matched"
+                    "note": "❌ No VAT ID matched, keeping temp_id"
                 })
 
         except Exception as e:
@@ -371,11 +390,15 @@ def resolve_temp_vat_ids(entity_glossary, model):
 
 # 5. Load entity glossary and try to resolve organization vat ids
 
-
 with open("data/entity_glossary/entity_glossary.json", "r", encoding="utf-8") as f:
     entity_glossary = json.load(f)
 
 resolved_glossary, changes = resolve_temp_vat_ids(entity_glossary, model41m)
+
+with open("change_log.json", "w", encoding="utf-8") as f:
+    json.dump(changes, f, indent=2, ensure_ascii=False)
+
+print("✅ Changelog saved to change_log.json")
 
 # Flatten structure: extract all aliases for each VAT ID
 rows = []
@@ -499,7 +522,7 @@ print(
 print(
     f"✅ Saved {len(output)} unique innovation objects to structured_innovations.json")
 
-draw_graph = False  # Set to True if you want to visualize the graph
+draw_graph = True  # Set to True if you want to visualize the graph
 
 
 if not draw_graph:
