@@ -9,6 +9,8 @@
 
 # 1. original source dataframe
 from draw_graph import build_graph_from_innovations
+from data_dedup import run_deduplication_pipeline
+from data_filter import filter_innovations_file
 import re
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -261,7 +263,7 @@ def initialize_llm(deployment_model: str, config_file_path: str = 'data/azure_co
 
     # Set the environment variable that AzureOpenAI expects
     # os.environ["AZURE_OPENAI_API_KEY_4O"] = cfg["api_key"]
-    print("Loaded config:", config)
+    # print("Loaded config:", config)
 
     print("Setting keys and endpoints for Azure OpenAI models...")
 
@@ -278,7 +280,7 @@ def initialize_llm(deployment_model: str, config_file_path: str = 'data/azure_co
     if not model_config:
         raise ValueError(f"Model '{deployment_model}' not found in config")
 
-    print("Model config:", model_config)
+    # print("Model config:", model_config)
     print(f"Using Azure OpenAI model: {deployment_model}")
     print(f"Using Azure OpenAI endpoint: {model_config['api_base']}")
     print(f"Using Azure OpenAI API version: {model_config['api_version']}")
@@ -475,7 +477,7 @@ output = []
 
 print(f"Found {len(grouped)} unique innovations to process...")
 
-for innovation_id, group in grouped:
+for innovation_id, group in tqdm(grouped, desc="Processing innovations"):
 
     participants = []
 
@@ -491,10 +493,10 @@ for innovation_id, group in grouped:
         if not match.empty:
             vat_ids_found += 1
             vat_id = match["vat_id"].iloc[0]
-            print(f"✅ Matched alias: '{name}' → VAT ID: {vat_id}")
+            # print(f"✅ Matched alias: '{name}' → VAT ID: {vat_id}")
         else:
             vat_id = "(not found)"
-            print(f"❌ No match found for alias: '{name}'")
+            # print(f"❌ No match found for alias: '{name}'")
 
         participants.append([vat_id, name])
 
@@ -519,7 +521,13 @@ print(
 print(
     f"✅ Saved {len(output)} unique innovation objects to structured_innovations.json")
 
-draw_graph = False  # Set to True if you want to visualize the graph
+# Run filtering pipeline
+filter_innovations_file()
+
+# Run deduplication pipeline
+run_deduplication_pipeline()
+
+draw_graph = True  # Set to True if you want to visualize the graph
 
 if draw_graph:
     build_graph_from_innovations()
