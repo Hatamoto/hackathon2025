@@ -8,7 +8,9 @@
 # - `Orbis ID`, also `VAT id` is a unique identifier for organizations, later used to merge different alias of the same organization to one unique id
 
 # 1. original source dataframe
+import hashlib
 import os
+import sys
 import pickle
 from langchain_openai import AzureChatOpenAI
 from tqdm import tqdm
@@ -16,9 +18,14 @@ import json
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 import pandas as pd
-import dotenv
 from dotenv import load_dotenv
+import sys
 
+# redirect stdout and stderr to a file
+sys.stdout = open("output.log", "w")
+sys.stderr = sys.stdout
+
+# load environment variables
 load_dotenv()
 
 df = pd.read_csv('data/dataframes/vtt_mentions_comp_domain.csv')
@@ -27,7 +34,7 @@ df['source_index'] = df.index
 
 print(
     f"DF with content from {len(df)} websites of {len(df['Company name'].unique())} different companies ")
-df.head(3)
+df.head(10)
 
 
 # ##### End-to-End relationship extraction
@@ -262,12 +269,14 @@ def initialize_llm(deployment_model: str, config_file_path: str = 'data/azure_co
 
     print("Setting keys and endpoints for Azure OpenAI models...")
 
-    config["gpt-4o-mini"]["api_key"] = os.getenv("AZURE_OPENAI_API_KEY_4O")
-    config["gpt-4.1-mini"]["api_key"] = os.getenv("AZURE_OPENAI_API_KEY_41")
-    # config["gpt-4o-mini"]["api_base"] = os.getenv("AZURE_OPENAI_BASE_URL_4O")
-    # config["gpt-4.1-mini"]["api_base"] = os.getenv("AZURE_OPENAI_BASE_URL_41")
-    config["gpt-4o-mini"]["api_base"] = os.getenv("AZURE_OPENAI_BASE_URL")
-    config["gpt-4.1-mini"]["api_base"] = os.getenv("AZURE_OPENAI_BASE_URL")
+    config["gpt-4o-mini"]["api_key"] = os.getenv("AZURE_OPENAI_API_KEY_4O_M")
+    config["gpt-4.1-mini"]["api_key"] = os.getenv("AZURE_OPENAI_API_KEY_41_M")
+    config["gpt-4.1"]["api_key"] = os.getenv("AZURE_OPENAI_API_KEY_41")
+    config["gpt-4o-mini"]["api_base"] = os.getenv("AZURE_OPENAI_BASE_URL_4O_M")
+    config["gpt-4.1-mini"]["api_base"] = os.getenv(
+        "AZURE_OPENAI_BASE_URL_41_M")
+    config["gpt-4.1"]["api_base"] = os.getenv(
+        "AZURE_OPENAI_BASE_URL_41")
 
     model_config = config.get(deployment_model)
     if not model_config:
@@ -291,13 +300,123 @@ def initialize_llm(deployment_model: str, config_file_path: str = 'data/azure_co
 
 
 # initialize
-# model = initialize_llm(deployment_model='gpt-4o-mini',
-#                       config_file_path='data/keys/azure_config.json')
-model = initialize_llm(deployment_model='gpt-4.1-mini',
-                       config_file_path='data/keys/azure_config.json')
-# model = initialize_llm(deployment_model='gpt-4.1',
-#                       config_file_path='data/keys/azure_config.json')
+model4om = initialize_llm(deployment_model='gpt-4o-mini',
+                          config_file_path='data/keys/azure_config.json')
+model41m = initialize_llm(deployment_model='gpt-4.1-mini',
+                          config_file_path='data/keys/azure_config.json')
+model41 = initialize_llm(deployment_model='gpt-4.1',
+                         config_file_path='data/keys/azure_config.json')
 
 # example use:
 prompt = ''
-model.invoke(prompt).content
+model4om.invoke(prompt).content
+model41m.invoke(prompt).content
+model41.invoke(prompt).content
+
+
+# exit()
+
+# structured = []
+
+# # Ensure df is your cleaned, combined dataframe
+# for (vat_id, url), group in df.groupby(["vat_id", "source_url"]):
+#     full_text = " ".join(group["text"].astype(str).tolist())
+
+#     prompt = f"""Summarize the following article and list all organizations involved in the innovation.
+
+# TEXT:
+# {full_text[:4000]}"""  # truncate for safety
+
+#     response = model41.invoke(prompt).content
+
+#     # Very simple way to extract entities and summary
+#     # In production, you'd parse this more safely
+#     summary = response.split("\n")[0].strip()
+#     participants = [line.strip("-• ").strip()
+#                     for line in response.split("\n")[1:] if line.strip()]
+
+#     innovation_id = hashlib.md5(f"{vat_id}{url}".encode()).hexdigest()[:8]
+
+#     structured.append({
+#         "innovation_id": innovation_id,
+#         "core_summary": summary,
+#         "participants": participants,
+#         "descriptions": [
+#             {
+#                 "source": row["source_url"],
+#                 "text": row["text"][:500],  # Optional truncation
+#                 "date": row.get("date", "unknown")
+#             }
+#             for _, row in group.iterrows()
+#         ]
+#     })
+
+# with open("vtt_structured_innovations.json", "w") as f:
+#     json.dump(structured, f, indent=2)
+
+# Extract innovation-centric entries from both DataFrames
+all_df = pd.concat(
+    [df_relationships_comp_url, df_relationships_vtt_domain], ignore_index=True)
+
+# Filter relationships that involve Innovations
+innovation_links = all_df[
+    (all_df["source type"] == "Innovation") | (
+        all_df["target type"] == "Innovation")
+].copy()
+
+# Normalize the data to have 'innovation_id', 'partner_id', etc.
+
+
+def extract_innovation_group(row):
+    if row["source type"] == "Innovation":
+        return pd.Series({
+            "innovation_id": row["source english_id"],
+            "innovation_desc": row["source description"],
+            "partner_id": row["target english_id"],
+            "partner_desc": row["target description"],
+            "partner_type": row["target type"],
+            "relationship": row["relationship type"],
+            "source_text": row["Source Text"][:500],
+            "source_link": row["Link Source Text"],
+        })
+    else:
+        return pd.Series({
+            "innovation_id": row["target english_id"],
+            "innovation_desc": row["target description"],
+            "partner_id": row["source english_id"],
+            "partner_desc": row["source description"],
+            "partner_type": row["source type"],
+            "relationship": row["relationship type"],
+            "source_text": row["Source Text"][:500],
+            "source_link": row["Link Source Text"],
+        })
+
+
+flat_df = innovation_links.apply(extract_innovation_group, axis=1)
+# ensure innovations are valid
+flat_df = flat_df.dropna(subset=["innovation_id"])
+
+# Group into final structured list
+grouped = flat_df.groupby("innovation_id")
+output = []
+
+for innovation_id, group in grouped:
+    participants = list(group[group["partner_type"] ==
+                        "Organization"]["partner_desc"].dropna().unique())
+    descriptions = group[["source_link", "source_text"]].drop_duplicates().rename(
+        columns={"source_link": "source", "source_text": "text"}
+    ).to_dict(orient="records")
+
+    output.append({
+        "innovation_id": innovation_id,
+        "core_summary": group["innovation_desc"].iloc[0],
+        "participants": participants,
+        "descriptions": descriptions,
+    })
+
+# Write to JSON
+with open("structured_innovations.json", "w", encoding="utf-8") as f:
+    json.dump(output, f, indent=2, ensure_ascii=False)
+
+print(
+    f"✅ Saved {len(output)} unique innovation objects to structured_innovations.json")

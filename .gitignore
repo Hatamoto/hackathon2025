@@ -6,3 +6,5 @@ __pycache__/
 data/
 .env
 *.html
+azure_config*.json
+.DS_Store
