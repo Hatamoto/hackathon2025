@@ -23,9 +23,12 @@ import pandas as pd
 from dotenv import load_dotenv
 import sys
 
+outputToFile = False  # Set to False if you want to see the output in the console
 # redirect stdout and stderr to a file
-sys.stdout = open("output.log", "w")
-sys.stderr = sys.stdout
+if outputToFile:
+    sys.stdout = open("output.log", "w")
+    sys.stderr = sys.stdout
+
 
 # load environment variables
 load_dotenv()
@@ -118,9 +121,39 @@ for doc in graph_doc:
 
 
 # 3. load entity glossary
-entity_glossary = json.load(
-    open('data/entity_glossary/entity_glossary.json', 'r', encoding='utf-8'))
-print(entity_glossary)
+
+with open("data/entity_glossary/entity_glossary.json", "r", encoding="utf-8") as f:
+    entity_glossary = json.load(f)
+
+# Flatten structure: extract all aliases for each VAT ID
+rows = []
+
+for vat_id, info in entity_glossary.items():
+    aliases = info.get("alias", [])
+    for alias in aliases:
+        rows.append({
+            "vat_id": vat_id,
+            "alias": alias.strip()
+        })
+
+# Create DataFrame and normalized alias column
+glossary_df = pd.DataFrame(rows)
+glossary_df["alias_norm"] = glossary_df["alias"].str.lower().str.strip()
+
+# Save normalized glossary for inspection
+glossary_df.to_csv("normalized_entity_glossary.csv", index=False)
+
+# Export to grouped JSON
+grouped_json = [
+    {"vat_id": vat_id, "aliases": aliases}
+    for vat_id, aliases in entity_glossary.items()
+]
+
+with open("normalized_entity_glossary.json", "w", encoding="utf-8") as f:
+    json.dump(grouped_json, f, indent=2, ensure_ascii=False)
+
+print(
+    f"✅ Exported glossary to normalized_entity_glossary.csv and normalized_entity_glossary.json with {len(entity_glossary)} unique VAT IDs.")
 
 
 # 2.3 loading example of custom graph document
@@ -258,6 +291,8 @@ df_relationships_vtt_domain.head(5)
 
 # 4. load api access credentials
 
+print("Loading Azure OpenAI API credentials...")
+
 config_file_path = './azure_config.json'
 
 
@@ -301,68 +336,23 @@ def initialize_llm(deployment_model: str, config_file_path: str = 'data/azure_co
     )
 
 
-# initialize
-model4om = initialize_llm(deployment_model='gpt-4o-mini',
-                          config_file_path='data/keys/azure_config.json')
+# # initialize
+# model4om = initialize_llm(deployment_model='gpt-4o-mini',
+#                           config_file_path='data/keys/azure_config.json')
 model41m = initialize_llm(deployment_model='gpt-4.1-mini',
                           config_file_path='data/keys/azure_config.json')
-model41 = initialize_llm(deployment_model='gpt-4.1',
-                         config_file_path='data/keys/azure_config.json')
+# # model41 = initialize_llm(deployment_model='gpt-4.1',
+# #                         config_file_path='data/keys/azure_config.json')
 
-# example use:
-prompt = ''
-model4om.invoke(prompt).content
-model41m.invoke(prompt).content
-model41.invoke(prompt).content
+# # example use:
+prompt = 'Say hello to the world!'
 
 
-# exit()
+print(f"✅ Successfully initialized Azure OpenAI model: {model41m.model_name}")
 
-# structured = []
-
-# # Ensure df is your cleaned, combined dataframe
-# for (vat_id, url), group in df.groupby(["vat_id", "source_url"]):
-#     full_text = " ".join(group["text"].astype(str).tolist())
-
-#     prompt = f"""Summarize the following article and list all organizations involved in the innovation.
-
-# TEXT:
-# {full_text[:4000]}"""  # truncate for safety
-
-#     response = model41.invoke(prompt).content
-
-#     # Very simple way to extract entities and summary
-#     # In production, you'd parse this more safely
-#     summary = response.split("\n")[0].strip()
-#     participants = [line.strip("-• ").strip()
-#                     for line in response.split("\n")[1:] if line.strip()]
-
-#     innovation_id = hashlib.md5(f"{vat_id}{url}".encode()).hexdigest()[:8]
-
-#     structured.append({
-#         "innovation_id": innovation_id,
-#         "core_summary": summary,
-#         "participants": participants,
-#         "descriptions": [
-#             {
-#                 "source": row["source_url"],
-#                 "text": row["text"][:500],  # Optional truncation
-#                 "date": row.get("date", "unknown")
-#             }
-#             for _, row in group.iterrows()
-#         ]
-#     })
-
-# with open("vtt_structured_innovations.json", "w") as f:
-#     json.dump(structured, f, indent=2)
-
-# Normalize glossary: alias (lowercased) → VAT ID
-alias_to_vat = {}
-for vat_id, aliases in entity_glossary.items():
-    for alias in aliases:
-        alias_to_vat[alias.lower()] = vat_id
-
-print(f"Loaded {len(alias_to_vat)} unique aliases for VAT IDs.")
+# model4om.invoke(prompt).content
+# model41m.invoke(prompt).content
+# model41.invoke(prompt).content
 
 # Extract innovation-centric entries from both DataFrames
 all_df = pd.concat(
@@ -410,36 +400,30 @@ flat_df = flat_df.dropna(subset=["innovation_id"])
 grouped = flat_df.groupby("innovation_id")
 output = []
 
+print(f"Found {len(grouped)} unique innovations to process...")
+
 for innovation_id, group in grouped:
 
-    # print(f"🔎 Innovation ID: {innovation_id}")
-    # print(group.head())         # Shows the first few rows
-    # print(group.columns.tolist())  # Lists all column names
-    # print(group.dtypes)         # Shows data types of each column
-    # print("-" * 50)
-    # This gives partner descriptions, not vat ids or names only
-    participants = list(group[group["partner_type"] ==
-                        "Organization"]["partner_id"].dropna().unique())
-    # participants = []
+    participants = []
 
-    # Filter to organizations
-    # org_partners = group[group["partner_type"] == "Organization"]
+    # Preprocess glossary_df to avoid repeated lower() calls
+    glossary_df["alias_norm"] = glossary_df["alias"].str.lower().str.strip()
 
-    # for _, row in org_partners.iterrows():
-    #     alias = row["partner_desc"]
-    #     vat_id = alias_to_vat.get(alias.lower(), "[unresolved]")
-    #     participants.append([vat_id, alias, row["relationship"]])
+    vat_ids_found = 0
 
-    # raw_partners = group[group["partner_type"] ==
-    #                      "Organization"]["partner_desc"].dropna().unique()
+    for name in group[group["partner_type"] == "Organization"]["partner_id"].dropna().unique():
+        name_norm = name.lower().strip()
+        match = glossary_df[glossary_df["alias_norm"] == name_norm]
 
-    # participants = []
-    # for name in raw_partners:
-    #     vat_id = alias_to_vat.get(name.lower())
-    #     if vat_id:
-    #         participants.append(vat_id)
-    #     else:
-    #         participants.append("[unresolved]")
+        if not match.empty:
+            vat_ids_found += 1
+            vat_id = match["vat_id"].iloc[0]
+            print(f"✅ Matched alias: '{name}' → VAT ID: {vat_id}")
+        else:
+            vat_id = "(not found)"
+            print(f"❌ No match found for alias: '{name}'")
+
+        participants.append([vat_id, name])
 
     descriptions = group[["source_link", "source_text"]].drop_duplicates().rename(
         columns={"source_link": "source", "source_text": "text"}
@@ -455,6 +439,9 @@ for innovation_id, group in grouped:
 # Write to JSON
 with open("structured_innovations.json", "w", encoding="utf-8") as f:
     json.dump(output, f, indent=2, ensure_ascii=False)
+
+print(
+    f"✅ Processed {len(output)} unique innovations with {vat_ids_found} VAT IDs found.")
 
 print(
     f"✅ Saved {len(output)} unique innovation objects to structured_innovations.json")
