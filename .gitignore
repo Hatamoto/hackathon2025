@@ -1,4 +1,8 @@
 .venv/
 src/raw_articles/
-
+*.zip
 vtt*.txt
+__pycache__/
+data/
+.env
+*.html
