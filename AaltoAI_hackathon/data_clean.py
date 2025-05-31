@@ -1,20 +1,3 @@
-import pandas as pd
-from typing import List, Dict, Optional
-from pydantic import BaseModel, Field, SecretStr
-import json
-from tqdm import tqdm
-import pickle
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-openai_api_key = os.getenv("OPENAI_API_KEY")
-
-if not openai_api_key:
-    raise ValueError("Please set the OPENAI_API_KEY environment variable.")
-model = ChatOpenAI(
-    model="gpt-4o", api_key=SecretStr(openai_api_key), temperature=0.0)
 #!/usr/bin/env python
 # coding: utf-8
 
@@ -24,8 +7,20 @@ model = ChatOpenAI(
 # - Websites from finnish companies that mention 'VTT' on their website
 # - `Orbis ID`, also `VAT id` is a unique identifier for organizations, later used to merge different alias of the same organization to one unique id
 
-
 # 1. original source dataframe
+import os
+import pickle
+from langchain_openai import AzureChatOpenAI
+from tqdm import tqdm
+import json
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional
+import pandas as pd
+import dotenv
+from dotenv import load_dotenv
+
+load_dotenv()
+
 df = pd.read_csv('data/dataframes/vtt_mentions_comp_domain.csv')
 df = df[df['Website'].str.startswith('www.')]
 df['source_index'] = df.index
@@ -39,7 +34,6 @@ df.head(3)
 # - Based on the above website content, entities of the type `Organization` and `Innovation` are extracted, as well as their type of relationship
 # - `Collaboration` between Organization and `Developed_by` between Innovation and Organization
 # - The relationships are stored in a custom object as displayed below:
-
 
 # 2.1. example of custom python object of data
 
@@ -253,26 +247,57 @@ df_relationships_vtt_domain.head(5)
 # - for this challenge we want to provide you access to OpenAI models: 4o-mini, 4.1 or 4.1-mini
 # - `ASK @ VTT-stand for key :)`
 
-
 # 4. load api access credentials
 
-# Initialize the OpenAI chat model
-if not openai_api_key:
-    raise ValueError("Please set the OPENAI_API_KEY environment variable.")
+config_file_path = './azure_config.json'
 
 
-def initialize_llm(deployment_model: str = "gpt-4"):
-    return ChatOpenAI(
+def initialize_llm(deployment_model: str, config_file_path: str = 'data/azure_config.json') -> AzureChatOpenAI:
+    with open(config_file_path, 'r') as jsonfile:
+        config = json.load(jsonfile)
+
+    # Set the environment variable that AzureOpenAI expects
+    # os.environ["AZURE_OPENAI_API_KEY_4O"] = cfg["api_key"]
+    print("Loaded config:", config)
+
+    print("Setting keys and endpoints for Azure OpenAI models...")
+
+    config["gpt-4o-mini"]["api_key"] = os.getenv("AZURE_OPENAI_API_KEY_4O")
+    config["gpt-4.1-mini"]["api_key"] = os.getenv("AZURE_OPENAI_API_KEY_41")
+    # config["gpt-4o-mini"]["api_base"] = os.getenv("AZURE_OPENAI_BASE_URL_4O")
+    # config["gpt-4.1-mini"]["api_base"] = os.getenv("AZURE_OPENAI_BASE_URL_41")
+    config["gpt-4o-mini"]["api_base"] = os.getenv("AZURE_OPENAI_BASE_URL")
+    config["gpt-4.1-mini"]["api_base"] = os.getenv("AZURE_OPENAI_BASE_URL")
+
+    model_config = config.get(deployment_model)
+    if not model_config:
+        raise ValueError(f"Model '{deployment_model}' not found in config")
+
+    print("Model config:", model_config)
+    print(f"Using Azure OpenAI model: {deployment_model}")
+    print(f"Using Azure OpenAI endpoint: {model_config['api_base']}")
+    print(f"Using Azure OpenAI API version: {model_config['api_version']}")
+    print(f"Using Azure OpenAI deployment name: {model_config['deployment']}")
+    print(f"Using Azure OpenAI API key: {model_config['api_key'][:4]}...")
+
+    # Use the correct nested config in the return
+    return AzureChatOpenAI(
         model=deployment_model,
-        # ensures compatibility with Pydantic
-        api_key=SecretStr(openai_api_key)  # type: ignore[call-arg]
+        api_key=model_config['api_key'],
+        deployment_name=model_config['deployment'],  # type: ignore[call-arg]
+        azure_endpoint=model_config['api_base'],
+        api_version=model_config['api_version'],
     )
 
 
-# Initialize a model (pick one model only)
-model = initialize_llm("gpt-4")  # or "gpt-4o", "gpt-3.5-turbo", etc.
+# initialize
+# model = initialize_llm(deployment_model='gpt-4o-mini',
+#                       config_file_path='data/keys/azure_config.json')
+model = initialize_llm(deployment_model='gpt-4.1-mini',
+                       config_file_path='data/keys/azure_config.json')
+# model = initialize_llm(deployment_model='gpt-4.1',
+#                       config_file_path='data/keys/azure_config.json')
 
-# Example usage
-prompt = "Explain what LangChain is in one sentence."
-response = model.invoke(prompt)
-print(response.content)
+# example use:
+prompt = ''
+model.invoke(prompt).content
