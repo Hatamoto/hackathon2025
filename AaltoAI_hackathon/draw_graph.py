@@ -65,25 +65,47 @@ def build_graph_from_innovations(
     return output_path
 
 
-def build_pyvis_innovation_graph(input="filtered_innovations.json", output_html="output/innovation_network.html") -> str:
+def build_pyvis_innovation_graph(
+    input="filtered_innovations.json",
+    glossary_path="resolved_entity_glossary.json",
+    output_html="output/innovation_network.html"
+) -> str:
 
     print("🔧 Building pyvis interactive innovation network graph...")
 
     with open(input, encoding="utf-8") as f:
-        data = json.load(f)
+        innovations = json.load(f)
+    with open(glossary_path, encoding="utf-8") as f:
+        glossary = json.load(f)
 
+    VTT_ID = "FI01111693"
     G = nx.Graph()
-    for item in data:
-        inn_id = item["innovation_id"]
-        G.add_node(inn_id, label=inn_id, group="Innovation")
-        for vat, name, *_ in item["participants"]:
-            G.add_node(vat, label=name, group="Organization")
-            G.add_edge(inn_id, vat, color="pink")
 
-    net = Network(height="750px", width="100%",
-                  bgcolor="#ffffff", font_color="black")  # type: ignore
+    # Add VTT node explicitly
+    G.add_node(VTT_ID, label="VTT", group="vtt")
+
+    for item in innovations:
+        innovation_id = item["innovation_id"]
+        G.add_node(innovation_id, label=innovation_id, group="project")
+
+        vtt_participates = False
+
+        for vat_id, name, *_ in item["participants"]:
+            group_type = "vtt" if vat_id == VTT_ID else "org"
+            G.add_node(vat_id, label=name, group=group_type)
+            G.add_edge(innovation_id, vat_id)
+
+            if vat_id == VTT_ID:
+                vtt_participates = True
+
+        # Only connect VTT if it is actually a participant
+        if vtt_participates:
+            G.add_edge(VTT_ID, innovation_id)
+
+    net = Network(height="750px", width="100%", bgcolor="#ffffff", font_color="black")
     net.from_nx(G)
     net.show_buttons(filter_=['physics'])
+
     Path(output_html).parent.mkdir(parents=True, exist_ok=True)
     net.write_html(output_html, notebook=False)
     return output_html
