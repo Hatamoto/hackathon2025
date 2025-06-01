@@ -12,6 +12,8 @@ from utils import write_json_and_track, has_file_changed
 from draw_graph import modify_all_functions_and_generate_html
 from data_dedup import run_deduplication_pipeline
 from data_filter import filter_innovations_file
+from data_loop import dedup_until_converged
+from data_valid import run_final_validation
 from resolve_vat import resolve_temp_vat_ids
 import re
 import matplotlib.pyplot as plt
@@ -460,7 +462,7 @@ dedup_until_converged(max_iter=10)
 
 draw_graph = True  # Set to True if you want to visualize the graph
 
-if draw_graphs:
+if draw_graph:
     print("Drawing graphs...")
     modify_all_functions_and_generate_html()
     print("Graphs generated and saved to html.")
