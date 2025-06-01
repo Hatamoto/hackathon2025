@@ -54,15 +54,14 @@ def build_graph_from_innovations(
         color = {"vtt": "red", "project": "green"}.get(node_type, "skyblue")
         node_colors.append(color)
 
-    plt.figure(figsize=(12, 10))
-    nx.draw(G, pos, with_labels=False, node_color=node_colors,
+    fig, ax = plt.subplots(figsize=(12, 10), constrained_layout=True)
+    nx.draw(G, pos, ax=ax, with_labels=False, node_color=node_colors,
             node_size=600, edge_color="#999")
-    nx.draw_networkx_labels(G, pos, labels, font_size=8)
-    plt.title("VTT Innovation Collaboration Network")
-    plt.tight_layout()
+    nx.draw_networkx_labels(G, pos, labels, font_size=8, ax=ax)
+    ax.set_title("VTT Innovation Collaboration Network")
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=150)
-    plt.close()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
     return output_path
 
 
