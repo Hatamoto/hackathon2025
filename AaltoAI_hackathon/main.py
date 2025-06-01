@@ -28,6 +28,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import sys
 from pathlib import Path
+import subprocess
 
 outputToFile = False  # Set to False if you want to see the output in the console
 # redirect stdout and stderr to a file
@@ -449,31 +450,23 @@ else:
     print(
         "Skipping innovation structuring pipeline, no changes detected in structured_innovations.json")
 
-DEDUP_INPUT = "filtered_innovations.json"       # ← syntyy filter-vaiheessa
-DEDUP_MERGED_OUT = "merged_innovations.json"    # klusteroidut + yhdistetyt
-DEDUP_SINGLES_OUT = "singles.json"          # yksittäiset, ei-duplikaatit
-DEDUP_MODEL = "gpt-4.1-mini"         # sama deployment-alias kuin .env
-DEDUP_CHUNK_SIZE = 10                # tai esim. 50/1000 tarpeen mukaan
-
 # Run filtering pipeline
-if has_file_changed("structured_innovations.json"):
-    print("Running innovation filtering pipeline...")
-    filter_innovations_file(input_file="structured_innovations.json")
-else:
-    print("Skipping filtering pipeline, no changes detected in structured_innovations.json")
+# if has_file_changed("structured_innovations.json") and os.path.exists("filtered_innovations.json"):
+print("Running innovation filtering pipeline...")
+filter_innovations_file(input_file="structured_innovations.json")
+# else:
+#     print("Skipping filtering pipeline, no changes detected in structured_innovations.json")
 
 # Run deduplication pipeline
-if has_file_changed("filtered_innovations.json") and os.path.exists(DEDUP_MERGED_OUT) and os.path.exists(DEDUP_SINGLES_OUT):
-    print("Running deduplication filtering pipeline...")
-    run_deduplication_pipeline(
-        input_path=DEDUP_INPUT,
-        merged_out=DEDUP_MERGED_OUT,
-        singles_out=DEDUP_SINGLES_OUT,
-        model_name=DEDUP_MODEL,
-        chunk_size=DEDUP_CHUNK_SIZE,
-    )
-else:
-    print("Skipping deduplication pipeline, no changes detected in filtered_innovations.json")
+# if has_file_changed("filtered_innovations.json") and os.path.exists("merged_innovations.json") and os.path.exists("singles.json"):
+print("Running deduplication filtering pipeline...")
+run_deduplication_pipeline()
+print("\n🚀 Running text-cluster deduplication (data_cluster.py)…")
+subprocess.run([sys.executable, "data_cluster.py"], check=True)
+print("✅ text-cluster deduplication finished.")
+# else:
+#     print("Skipping deduplication pipeline, no changes detected in filtered_innovations.json")
+
 
 draw_graphs = True  # Set to True if you want to visualize the graph
 

@@ -1,7 +1,6 @@
 {
   "data/entity_glossary/entity_glossary.json": "3922e755d81e749d6e611e665859fc7ebb96a15fc369febcd89ef31347892ca6",
-  "resolved_entity_glossary.json": "06e96310eebbe227e213d43564ee756362a75a1ef2ba7c01dc31c297214fae93",
-  "vat_resolution_log.json": "d4fa83c50a8ad462099b008df1d0a60a91dbdc369896c79ff31997c641e89b59",
-  "structured_innovations.json": "078875ef808122b0f640ea444291386e81f4ee51b90c6d0ef31c6aa66514ffc1",
-  "filtered_innovations.json": "e99ce5b8e60ebfd2051799a89065a2642f9c201eb3b420a366e8b1617614bdf1"
+  "structured_innovations.json": "4a3ec278f2be7e0c2a608f229b3a7a8d132c71431a4ded4352c30661d29bb3e2",
+  "merged_innovations.json": "f42c338610a92bac350473c2a191eb8da02a75f0bd73a74f1295761b174ecd1e",
+  "singles.json": "166656b73168b8cc3c6a18edbfcbca663196f28bfc74d24ed6c2faa470323e0f"
 }
