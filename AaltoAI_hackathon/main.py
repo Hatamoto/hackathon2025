@@ -25,6 +25,7 @@ from typing import List, Dict, Optional
 import pandas as pd
 from dotenv import load_dotenv
 import sys
+from pathlib import Path
 
 outputToFile = False  # Set to False if you want to see the output in the console
 # redirect stdout and stderr to a file
@@ -429,97 +430,101 @@ glossary_df["alias_norm"] = glossary_df["alias"].str.lower().str.strip()
 print(
     f"📄 Final glossary dataframe created with {len(glossary_df)} alias entries.")
 
-# Extract innovation-centric entries from both DataFrames
-all_df = pd.concat(
-    [df_relationships_comp_url, df_relationships_vtt_domain], ignore_index=True)
+structured_path = Path("structured_innovations.json")
 
-# Filter relationships that involve Innovations
-innovation_links = all_df[
-    (all_df["source type"] == "Innovation") | (
-        all_df["target type"] == "Innovation")
-].copy()
+if structured_path.exists():
+    print("⏩ Skipping innovation extraction — JSON file already exists.")
+else:
 
-# Normalize the data to have 'innovation_id', 'partner_id', etc.
+    # Extract innovation-centric entries from both DataFrames
+    all_df = pd.concat(
+        [df_relationships_comp_url, df_relationships_vtt_domain], ignore_index=True)
 
+    # Filter relationships that involve Innovations
+    innovation_links = all_df[
+        (all_df["source type"] == "Innovation") | (
+            all_df["target type"] == "Innovation")
+    ].copy()
 
-def extract_innovation_group(row):
-    if row["source type"] == "Innovation":
-        return pd.Series({
-            "innovation_id": row["source english_id"],
-            "innovation_desc": row["source description"],
-            "partner_id": row["target english_id"],
-            "partner_desc": row["target description"],
-            "partner_type": row["target type"],
-            "relationship": row["relationship type"],
-            "source_text": row["Source Text"][:5000],
-            "source_link": row["Link Source Text"],
-        })
-    else:
-        return pd.Series({
-            "innovation_id": row["target english_id"],
-            "innovation_desc": row["target description"],
-            "partner_id": row["source english_id"],
-            "partner_desc": row["source description"],
-            "partner_type": row["source type"],
-            "relationship": row["relationship type"],
-            "source_text": row["Source Text"][:5000],
-            "source_link": row["Link Source Text"],
-        })
+    # Normalize the data to have 'innovation_id', 'partner_id', etc.
 
-
-flat_df = innovation_links.apply(extract_innovation_group, axis=1)
-# ensure innovations are valid
-flat_df = flat_df.dropna(subset=["innovation_id"])
-
-# Group into final structured list
-grouped = flat_df.groupby("innovation_id")
-output = []
-
-print(f"Found {len(grouped)} unique innovations to process...")
-
-for innovation_id, group in tqdm(grouped, desc="Processing innovations"):
-
-    participants = []
-
-    # Preprocess glossary_df to avoid repeated lower() calls
-    glossary_df["alias_norm"] = glossary_df["alias"].str.lower().str.strip()
-
-    vat_ids_found = 0
-
-    for name in group[group["partner_type"] == "Organization"]["partner_id"].dropna().unique():
-        name_norm = name.lower().strip()
-        match = glossary_df[glossary_df["alias_norm"] == name_norm]
-
-        if not match.empty:
-            vat_ids_found += 1
-            vat_id = match["vat_id"].iloc[0]
-            # print(f"✅ Matched alias: '{name}' → VAT ID: {vat_id}")
+    def extract_innovation_group(row):
+        if row["source type"] == "Innovation":
+            return pd.Series({
+                "innovation_id": row["source english_id"],
+                "innovation_desc": row["source description"],
+                "partner_id": row["target english_id"],
+                "partner_desc": row["target description"],
+                "partner_type": row["target type"],
+                "relationship": row["relationship type"],
+                "source_text": row["Source Text"][:5000],
+                "source_link": row["Link Source Text"],
+            })
         else:
-            vat_id = "(not found)"
-            # print(f"❌ No match found for alias: '{name}'")
+            return pd.Series({
+                "innovation_id": row["target english_id"],
+                "innovation_desc": row["target description"],
+                "partner_id": row["source english_id"],
+                "partner_desc": row["source description"],
+                "partner_type": row["source type"],
+                "relationship": row["relationship type"],
+                "source_text": row["Source Text"][:5000],
+                "source_link": row["Link Source Text"],
+            })
 
-        participants.append([vat_id, name])
+    flat_df = innovation_links.apply(extract_innovation_group, axis=1)
+    # ensure innovations are valid
+    flat_df = flat_df.dropna(subset=["innovation_id"])
 
-    descriptions = group[["source_link", "source_text"]].drop_duplicates().rename(
-        columns={"source_link": "source", "source_text": "text"}
-    ).to_dict(orient="records")
+    # Group into final structured list
+    grouped = flat_df.groupby("innovation_id")
+    output = []
 
-    output.append({
-        "innovation_id": innovation_id,
-        "core_summary": group["innovation_desc"].iloc[0],
-        "participants": participants,
-        "descriptions": descriptions,
-    })
+    print(f"Found {len(grouped)} unique innovations to process...")
 
-# Write to JSON
-with open("structured_innovations.json", "w", encoding="utf-8") as f:
-    json.dump(output, f, indent=2, ensure_ascii=False)
+    for innovation_id, group in tqdm(grouped, desc="Processing innovations"):
 
-print(
-    f"✅ Processed {len(output)} unique innovations with {vat_ids_found} VAT IDs found.")
+        participants = []
 
-print(
-    f"✅ Saved {len(output)} unique innovation objects to structured_innovations.json")
+        # Preprocess glossary_df to avoid repeated lower() calls
+        glossary_df["alias_norm"] = glossary_df["alias"].str.lower().str.strip()
+
+        vat_ids_found = 0
+
+        for name in group[group["partner_type"] == "Organization"]["partner_id"].dropna().unique():
+            name_norm = name.lower().strip()
+            match = glossary_df[glossary_df["alias_norm"] == name_norm]
+
+            if not match.empty:
+                vat_ids_found += 1
+                vat_id = match["vat_id"].iloc[0]
+                # print(f"✅ Matched alias: '{name}' → VAT ID: {vat_id}")
+            else:
+                vat_id = "(not found)"
+                # print(f"❌ No match found for alias: '{name}'")
+
+            participants.append([vat_id, name])
+
+        descriptions = group[["source_link", "source_text"]].drop_duplicates().rename(
+            columns={"source_link": "source", "source_text": "text"}
+        ).to_dict(orient="records")
+
+        output.append({
+            "innovation_id": innovation_id,
+            "core_summary": group["innovation_desc"].iloc[0],
+            "participants": participants,
+            "descriptions": descriptions,
+        })
+
+    # Write to JSON
+    with open("structured_innovations.json", "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+
+    print(
+        f"✅ Processed {len(output)} unique innovations with {vat_ids_found} VAT IDs found.")
+
+    print(
+        f"✅ Saved {len(output)} unique innovation objects to structured_innovations.json")
 
 # Run filtering pipeline
 filter_innovations_file()
@@ -527,7 +532,7 @@ filter_innovations_file()
 # Run deduplication pipeline
 run_deduplication_pipeline()
 
-draw_graph = True  # Set to True if you want to visualize the graph
+draw_graph = False  # Set to True if you want to visualize the graph
 
 if draw_graph:
     build_graph_from_innovations()
