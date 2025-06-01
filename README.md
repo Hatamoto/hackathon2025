@@ -21,8 +21,17 @@ you get files:
 
 structured_innovations.json
 
--   this is our json structured cleaned project database with collaborators and sources
+-   this is our json structured cleaned project database with collaborators and sources. vat ids are inferred from llm model
+    for temp_xxx ids.
+
+filtered_innovations.json
+
+deduplicated_innovations.json
+
+merged_innovations.json
+
+-   stages of deduplication where we first filter, then deduplicate and merge sources to generate deduplicated data
 
 vtt_network_graph.png
 
--   visualization of VTT's innovation network
+-   visualization of VTT's innovation network (lot of data)
