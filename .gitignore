@@ -11,3 +11,6 @@ normalized_entity_glossary.json
 normalized_entity_glossary.csv
 vat_resolution_log.json
 *.png
+merged_innovations.json
+filtered_innovations.json
+deduplicated_innovations.json
