@@ -17,7 +17,7 @@ def load_participants_from_resolved_json(path="resolved_entity_glossary.json"):
 
 
 def build_graph_from_innovations(
-    json_path="merged_innovations.json",
+    json_path="filtered_innovations.json",
     glossary_path="resolved_entity_glossary.json",
     output_path="output/vtt_network_graph.png"
 ) -> str:
@@ -65,7 +65,7 @@ def build_graph_from_innovations(
     return output_path
 
 
-def build_pyvis_innovation_graph(input="merged_innovations.json", output_html="output/innovation_network.html") -> str:
+def build_pyvis_innovation_graph(input="filtered_innovations.json", output_html="output/innovation_network.html") -> str:
 
     print("🔧 Building pyvis interactive innovation network graph...")
 
@@ -89,7 +89,7 @@ def build_pyvis_innovation_graph(input="merged_innovations.json", output_html="o
     return output_html
 
 
-def build_barplot_graph_from_participants(input="merged_innovations.json", output_path="output/barplot.png") -> str:
+def build_barplot_graph_from_participants(input="filtered_innovations.json", output_path="output/barplot.png") -> str:
 
     print("🔧 Building barplot graph from innovations...")
 
@@ -114,7 +114,7 @@ def build_barplot_graph_from_participants(input="merged_innovations.json", outpu
     return output_path
 
 
-def build_top_organizations_graph(input="merged_innovations.json", output_path="output/top_orgs.png", top_n=10) -> str:
+def build_top_organizations_graph(input="filtered_innovations.json", output_path="output/top_orgs.png", top_n=10) -> str:
 
     print("🔧 Building top organizations graph from innovations...")
 
