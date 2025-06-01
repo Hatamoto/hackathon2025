@@ -34,17 +34,15 @@ def build_graph_from_innovations(
     VTT_ID = "FI01111693"
     G.add_node(VTT_ID, label="VTT", type="vtt")
 
-    for item in innovations[:50]:
-        innovation_id = item["innovation_id"][:30]
+    for item in innovations:
+        innovation_id = item["innovation_id"]
         G.add_node(innovation_id, label=innovation_id, type="project")
         G.add_edge(VTT_ID, innovation_id)
 
-        for vat_id, info in participants:
+        for vat_id, name, *_ in item["participants"]:
             if vat_id == VTT_ID:
                 continue
-            aliases = info.get("alias", []) if isinstance(info, dict) else info
-            label = aliases[0] if aliases else vat_id
-            G.add_node(vat_id, label=label, type="org")
+            G.add_node(vat_id, label=name, type="org")
             G.add_edge(innovation_id, vat_id)
 
     pos = nx.kamada_kawai_layout(G)
@@ -146,7 +144,7 @@ def build_top_organizations_graph(input="merged_innovations.json", output_path="
 
 
 def modify_all_functions_and_generate_html():
-    img1 = "vtt_network_graph.png"
+    img1 = build_graph_from_innovations()
     img2 = build_barplot_graph_from_participants()
     img3 = build_top_organizations_graph()
     pyvis_html = build_pyvis_innovation_graph()

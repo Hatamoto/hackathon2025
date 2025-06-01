@@ -147,7 +147,7 @@ def _is_innovation(summary: str, fallback_text: str | None = None) -> bool:
     prompt = "\n".join(parts)
 
     try:
-        ans = _get_llm().invoke(prompt).content.strip().lower()
+        ans = _get_llm().invoke(prompt).content.strip().lower()  # type: ignore
         return ans.startswith("y")
     except Exception as e:
         print(f"⚠️  LLM innovation check failed: {e}", file=sys.stderr)

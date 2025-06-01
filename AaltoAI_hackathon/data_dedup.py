@@ -75,7 +75,7 @@ def _llm_binary(question: str, model: AzureChatOpenAI) -> str:
     """Ask LLM a STRICT YES / NO / UNSURE question."""
     prompt = "Answer STRICTLY with YES, NO, or UNSURE (no extra words).\n" + \
         question
-    reply = model.invoke(prompt).content.strip().upper()
+    reply = model.invoke(prompt).content.strip().upper()  # type: ignore
     if reply.startswith("YES"):
         return "YES"
     if reply.startswith("NO"):
