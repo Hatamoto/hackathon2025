@@ -13,7 +13,10 @@ Updated data‑cleaning script (v1.6, 1 Jun 2025)
 
 from __future__ import annotations
 
-import json, os, re, sys
+import json
+import os
+import re
+import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -53,6 +56,7 @@ USE_LLM = os.getenv("USE_LLM_CLASSIFIER", "false").lower() == "true"
 if USE_LLM:
     from langchain_openai import AzureChatOpenAI  # type: ignore
     _LLM: Optional[AzureChatOpenAI] = None
+
     def _get_llm() -> AzureChatOpenAI:
         global _LLM
         if _LLM is None:
@@ -63,7 +67,7 @@ if USE_LLM:
             _LLM = AzureChatOpenAI(
                 model=m,
                 api_key=cfg[m]["api_key"],
-                deployment_name=cfg[m]["deployment"],
+                deployment_name=cfg[m]["deployment"],  # type: ignore[arg-type]
                 azure_endpoint=cfg[m]["api_base"],
                 api_version=cfg[m]["api_version"],
             )
@@ -72,11 +76,15 @@ if USE_LLM:
 # ---------------------------------------------------------------------------
 # GLOSSARY FOR ALIASES -------------------------------------------------------
 # ---------------------------------------------------------------------------
-_GLOSSARY_PATH = Path("resolved_entity_glossary.json") if Path("resolved_entity_glossary.json").is_file() else Path("data/entity_glossary/entity_glossary.json")
+_GLOSSARY_PATH = Path("resolved_entity_glossary.json") if Path(
+    "resolved_entity_glossary.json").is_file() else Path("data/entity_glossary/entity_glossary.json")
 try:
-    _glossary_raw: Dict[str, Dict[str, Any]] = json.loads(_GLOSSARY_PATH.read_text(encoding="utf-8"))
-    CANONICAL_ALIAS = {vat: info.get("alias", [vat])[0] for vat, info in _glossary_raw.items()}
-    ALIAS_LOOKUP = {alias.lower().strip(): vat for vat, info in _glossary_raw.items() for alias in info.get("alias", [])}
+    _glossary_raw: Dict[str, Dict[str, Any]] = json.loads(
+        _GLOSSARY_PATH.read_text(encoding="utf-8"))
+    CANONICAL_ALIAS = {vat: info.get("alias", [vat])[
+        0] for vat, info in _glossary_raw.items()}
+    ALIAS_LOOKUP = {alias.lower().strip(): vat for vat, info in _glossary_raw.items()
+                    for alias in info.get("alias", [])}
 except Exception as e:
     print(f"⚠️  Glossary load failed: {e}", file=sys.stderr)
     CANONICAL_ALIAS, ALIAS_LOOKUP = {}, {}
@@ -85,6 +93,7 @@ except Exception as e:
 # UTILITIES -----------------------------------------------------------------
 # ---------------------------------------------------------------------------
 
+
 def _strip_html(text: str) -> str:
     try:
         soup = BeautifulSoup(text, "lxml")
@@ -92,12 +101,14 @@ def _strip_html(text: str) -> str:
         soup = BeautifulSoup(text, "html.parser")
     return fix_text(soup.get_text(separator=" "))
 
+
 def _clean_text(raw: str) -> Optional[str]:
     t = _strip_html(raw)
     for rx in COMMON_BOILER_REGEXES:
         t = rx.sub(" ", t)
     t = re.sub(r"\s+", " ", t).strip()
     return t if MIN_LEN <= len(t) <= MAX_LEN else None
+
 
 def normalise_date(date_str: str | None) -> str:
     if not date_str:
@@ -110,6 +121,7 @@ def normalise_date(date_str: str | None) -> str:
 # ---------------------------------------------------------------------------
 # INNOVATION CLASSIFIER ------------------------------------------------------
 # ---------------------------------------------------------------------------
+
 
 def _is_innovation(summary: str, fallback_text: str | None = None) -> bool:
     if KEYWORDS.search(summary):
@@ -129,12 +141,13 @@ def _is_innovation(summary: str, fallback_text: str | None = None) -> bool:
         "\"\"\"",
     ]
     if fallback_text:
-        parts += ["", "ADDITIONAL CONTEXT:", "\"\"\"", fallback_text[:800], "\"\"\""]
+        parts += ["", "ADDITIONAL CONTEXT:",
+                  "\"\"\"", fallback_text[:800], "\"\"\""]
     parts.append("Respond ONLY with YES or NO.")
     prompt = "\n".join(parts)
 
     try:
-        ans = _get_llm().invoke(prompt).content.strip().lower()
+        ans = _get_llm().invoke(prompt).content.strip().lower()  # type: ignore
         return ans.startswith("y")
     except Exception as e:
         print(f"⚠️  LLM innovation check failed: {e}", file=sys.stderr)
@@ -143,6 +156,7 @@ def _is_innovation(summary: str, fallback_text: str | None = None) -> bool:
 # ---------------------------------------------------------------------------
 # PARTICIPANT NORMALISATION --------------------------------------------------
 # ---------------------------------------------------------------------------
+
 
 def _normalise_participants(parts: List[List[str]]) -> Tuple[List[List[str]], int]:
     changes = 0
@@ -171,12 +185,14 @@ def _normalise_participants(parts: List[List[str]]) -> Tuple[List[List[str]], in
 # MAIN PROCESSOR -------------------------------------------------------------
 # ---------------------------------------------------------------------------
 
+
 def process_innovations(recs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int, int, int, int]:
     out, seen_desc = [], set()
     desc_before = desc_after = alias_changes = removed_articles = 0
 
     for rec in recs:
-        first_text = rec.get("descriptions", [{}])[0].get("text", "") if rec.get("descriptions") else ""
+        first_text = rec.get("descriptions", [{}])[0].get(
+            "text", "") if rec.get("descriptions") else ""
         if not _is_innovation(rec.get("core_summary", ""), first_text):
             removed_articles += 1
             continue
@@ -189,7 +205,8 @@ def process_innovations(recs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]
                 continue
             if not _is_innovation("", cleaned):  # verify each description
                 continue
-            new_descs.append({"source": d.get("source"), "text": cleaned, "date": normalise_date(d.get("date"))})
+            new_descs.append({"source": d.get(
+                "source"), "text": cleaned, "date": normalise_date(d.get("date"))})
             seen_desc.add(cleaned)
             desc_after += 1
 
@@ -197,7 +214,8 @@ def process_innovations(recs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]
             removed_articles += 1
             continue
 
-        norm_parts, delta = _normalise_participants(rec.get("participants", []))
+        norm_parts, delta = _normalise_participants(
+            rec.get("participants", []))
         alias_changes += delta
         out.append({
             "innovation_id": rec.get("innovation_id"),
@@ -212,6 +230,7 @@ def process_innovations(recs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]
 # FILE WRAPPER --------------------------------------------------------------
 # ---------------------------------------------------------------------------
 
+
 def filter_innovations_file(
     input_file: str = "structured_innovations.json", *, output_file: str = "filtered_innovations.json"
 ) -> None:
@@ -223,7 +242,8 @@ def filter_innovations_file(
     kept = len(cleaned)
 
     # write output
-    Path(output_file).write_text(json.dumps(cleaned, indent=2, ensure_ascii=False), encoding="utf-8")
+    Path(output_file).write_text(json.dumps(
+        cleaned, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(
         f"✅ {total_innov:,} innovations processed • {kept:,} kept • {removed:,} removed as non‑innovation "

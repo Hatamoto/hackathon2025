@@ -8,11 +8,11 @@
 # - `Orbis ID`, also `VAT id` is a unique identifier for organizations, later used to merge different alias of the same organization to one unique id
 
 # 1. original source dataframe
-from draw_graph import build_graph_from_innovations
+from utils import write_json_and_track, has_file_changed
+from draw_graph import modify_all_functions_and_generate_html
 from data_dedup import run_deduplication_pipeline
 from data_filter import filter_innovations_file
-from data_valid import run_final_validation
-from data_loop import dedup_until_converged
+from resolve_vat import resolve_temp_vat_ids
 import re
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -28,7 +28,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import sys
 from pathlib import Path
-import subprocess 
+import subprocess
 
 outputToFile = False  # Set to False if you want to see the output in the console
 # redirect stdout and stderr to a file
@@ -265,10 +265,6 @@ def initialize_llm(deployment_model: str, config_file_path: str = 'data/azure_co
     with open(config_file_path, 'r') as jsonfile:
         config = json.load(jsonfile)
 
-    # Set the environment variable that AzureOpenAI expects
-    # os.environ["AZURE_OPENAI_API_KEY_4O"] = cfg["api_key"]
-    # print("Loaded config:", config)
-
     print("Setting keys and endpoints for Azure OpenAI models...")
 
     config["gpt-4o-mini"]["api_key"] = os.getenv("AZURE_OPENAI_API_KEY_4O_M")
@@ -308,7 +304,7 @@ model41m = initialize_llm(deployment_model='gpt-4.1-mini',
 # # model41 = initialize_llm(deployment_model='gpt-4.1',
 # #                         config_file_path='data/keys/azure_config.json')
 
-print(f"✅ Successfully initialized Azure OpenAI model: {model41m.model_name}")
+print(f"Successfully initialized Azure OpenAI model: {model41m.model_name}")
 
 
 # #### Name ambiguity resolution
@@ -316,128 +312,49 @@ print(f"✅ Successfully initialized Azure OpenAI model: {model41m.model_name}")
 # - this ambiguity is partly solved by mapping organization to a unique identifier: `VAT ID`
 # - the dict: `entity_glossary` stores Ids and Alias as key-value pairs
 
-
-def resolve_temp_vat_ids(entity_glossary, model):
-    change_log = []
-    temp_keys = [k for k in entity_glossary if k.startswith("temp")]
-
-    for temp_id in tqdm(temp_keys, desc="🔁 Resolving temp VAT IDs (domestic + international)"):
-        aliases_dict = entity_glossary[temp_id]
-        aliases = aliases_dict.get("alias", [])
-        alias_list = ', '.join(aliases)
-
-        prompt = (
-            f"The following names are aliases or company names possibly from Finland or abroad: {alias_list}. "
-            f"If you can identify the company, provide the official VAT ID or registration number, "
-            f"preferably including country code (e.g., FI12345678, DE999999999, US 12-3456789, CHE-123.456.789, etc.). "
-            f"Only respond with the best guess for the VAT or registration ID, nothing else."
-        )
-
-        try:
-            response = model.invoke(prompt).content.strip()
-
-            # Match broader international company/VAT registration formats
-            match = re.search(
-                r'\b('
-                # e.g., IT02131140589, GB 08892708, NO 938 910 039 MVA
-                r'[A-Z]{2}[-\s]?\d{7,12}([-\s]?\d{1,2})?([-\s]?[A-Z]{2,4})?|'
-                # US EIN: 12-3456789
-                r'\d{2}[-\s]?\d{7}|'
-                # Swiss: CHE-123.456.789
-                r'CHE[-\s]?\d{3}\.\d{3}\.\d{3}|'
-                # UK/DE like: SC123456, DE999999999
-                r'[A-Z]{2,3}\d{6,10}|'
-                # fallback plain numeric
-                r'\d{9,12}'
-                r')\b',
-                response,
-                re.IGNORECASE
-            )
-
-            # Bypass regex for now
-            match = response if response else None
-
-            if match:
-                # new_vat_id = match.group(0)
-                new_vat_id = response.strip()
-                if new_vat_id in entity_glossary:
-                    existing_aliases = entity_glossary[new_vat_id].setdefault(
-                        "alias", [])
-                    entity_glossary[new_vat_id]["alias"] = list(
-                        set(existing_aliases + aliases))
-                else:
-                    entity_glossary[new_vat_id] = {"alias": aliases}
-                del entity_glossary[temp_id]
-                change_log.append({
-                    "replaced": temp_id,
-                    "new_vat_id": new_vat_id,
-                    "aliases": aliases,
-                    "response": response
-                })
-            else:
-                # No valid ID matched: keep temp_id
-                change_log.append({
-                    "replaced": temp_id,
-                    "new_vat_id": None,
-                    "aliases": aliases,
-                    "response": response,
-                    "note": "❌ No VAT ID matched, keeping temp_id"
-                })
-
-        except Exception as e:
-            change_log.append({
-                "replaced": temp_id,
-                "new_vat_id": None,
-                "aliases": aliases,
-                "error": str(e)
-            })
-
-    return entity_glossary, change_log
-
-
 # 5. Load entity glossary and try to resolve organization vat ids
 
 resolved_path = "resolved_entity_glossary.json"
 changelog_path = "vat_resolution_log.json"
 
-if os.path.exists(resolved_path) and os.path.exists(changelog_path):
-    print("📦 Using cached resolved glossary")
+if os.path.exists(resolved_path) and os.path.exists(changelog_path) and not has_file_changed("data/entity_glossary/entity_glossary.json"):
+    print("Using cached resolved glossary")
     with open(resolved_path, "r", encoding="utf-8") as f:
         resolved_glossary = json.load(f)
     with open(changelog_path, "r", encoding="utf-8") as f:
         changes = json.load(f)
 else:
-    print("🤖 Running VAT resolution via LLM")
+    print("Running VAT resolution via LLM")
     with open("data/entity_glossary/entity_glossary.json", "r", encoding="utf-8") as f:
         entity_glossary = json.load(f)
 
     resolved_glossary, changes = resolve_temp_vat_ids(
         entity_glossary, model41m)
 
-    with open(resolved_path, "w", encoding="utf-8") as f:
-        json.dump(resolved_glossary, f, indent=2, ensure_ascii=False)
-        print(
-            f"✅ Exported glossary to normalized_entity_glossary.json and normalized_entity_glossary.json with {len(entity_glossary)} unique VAT IDs.")
-    with open(changelog_path, "w", encoding="utf-8") as f:
-        json.dump(changes, f, indent=2, ensure_ascii=False)
+    write_json_and_track(resolved_path, resolved_glossary)
+    print(
+        f"Exported glossary to resolved_entity_glossary.json with {len(entity_glossary)} unique VAT IDs.")
+    write_json_and_track(changelog_path, changes)
 
-# Convert to flat DataFrame
+# Convert to flat DataFrame with inferred flag
 rows = [
-    {"vat_id": vat_id, "alias": alias.strip()}
+    {
+        "vat_id": vat_id,
+        "alias": alias.strip(),
+        "inferred": info.get("inferred", 0)
+    }
     for vat_id, info in resolved_glossary.items()
     for alias in info.get("alias", [])
 ]
+
 glossary_df = pd.DataFrame(rows)
 glossary_df["alias_norm"] = glossary_df["alias"].str.lower().str.strip()
 
 print(
-    f"📄 Final glossary dataframe created with {len(glossary_df)} alias entries.")
+    f"Final glossary dataframe created with {len(glossary_df)} alias entries.")
 
-structured_path = Path("structured_innovations.json")
-
-if structured_path.exists():
-    print("⏩ Skipping innovation extraction — JSON file already exists.")
-else:
+if has_file_changed("structured_innovations.json"):
+    print("Running innovation structuring pipeline...")
 
     # Extract innovation-centric entries from both DataFrames
     all_df = pd.concat(
@@ -493,6 +410,7 @@ else:
         glossary_df["alias_norm"] = glossary_df["alias"].str.lower().str.strip()
 
         vat_ids_found = 0
+        unknown_counter = 1
 
         for name in group[group["partner_type"] == "Organization"]["partner_id"].dropna().unique():
             name_norm = name.lower().strip()
@@ -501,10 +419,11 @@ else:
             if not match.empty:
                 vat_ids_found += 1
                 vat_id = match["vat_id"].iloc[0]
-                # print(f"✅ Matched alias: '{name}' → VAT ID: {vat_id}")
+                # print(f"Matched alias: '{name}' → VAT ID: {vat_id}")
             else:
-                vat_id = "(not found)"
-                # print(f"❌ No match found for alias: '{name}'")
+                vat_id = f"UNKNOWN_{unknown_counter:06d}"
+                unknown_counter += 1
+                # print(f"No match found for alias: '{name}' → Assigned {vat_id}")
 
             participants.append([vat_id, name])
 
@@ -520,20 +439,28 @@ else:
         })
 
     # Write to JSON
-    with open("structured_innovations.json", "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
+    write_json_and_track("structured_innovations.json", output)
 
     print(
-        f"✅ Processed {len(output)} unique innovations with {vat_ids_found} VAT IDs found.")
-
+        f"Processed {len(output)} unique innovations with {vat_ids_found} VAT IDs found.")
+    print(f"Found {unknown_counter - 1} unknown aliases, assigned unique IDs.")
     print(
-        f"✅ Saved {len(output)} unique innovation objects to structured_innovations.json")
+        f"Saved {len(output)} unique innovation objects to structured_innovations.json")
+else:
+    print(
+        "Skipping innovation structuring pipeline, no changes detected in structured_innovations.json")
 
-filter_innovations_file()
+# if has_file_changed("structured_innovations.json") and os.path.exists("filtered_innovations.json"):
+print("Running innovation filtering pipeline...")
+filter_innovations_file(input_file="structured_innovations.json")
+# else:
+#     print("Skipping filtering pipeline, no changes detected in structured_innovations.json")
 
 dedup_until_converged(max_iter=10)
 
 draw_graph = True  # Set to True if you want to visualize the graph
 
-if draw_graph:
-    build_graph_from_innovations()
+if draw_graphs:
+    print("Drawing graphs...")
+    modify_all_functions_and_generate_html()
+    print("Graphs generated and saved to html.")

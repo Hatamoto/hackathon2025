@@ -10,7 +10,9 @@ AI-assisted merger (v2.3, 9 Jun 2025)
 • Tulosteet: merged_innovations.json  &  singles.json
 """
 
-import argparse, json, os, re, textwrap
+import argparse
+import json
+import re
 from itertools import combinations
 from collections import defaultdict
 from typing import Dict, List, Tuple
@@ -19,16 +21,18 @@ from dotenv import load_dotenv
 from rapidfuzz import fuzz
 from langchain_openai import AzureChatOpenAI
 
+from utils import write_json_and_track
+
 # ──────────────────────────────  Oletusarvot  ────────────────────────────────
 
-DEFAULT_INPUT        = "filtered_innovations.json"
-DEFAULT_MERGED_OUT   = "merged_innovations.json"
-DEFAULT_SINGLES_OUT  = "singles.json"
-DEFAULT_MODEL        = "gpt-4.1-mini"
-DEFAULT_BATCH_SIZE   = 20
-DEFAULT_FUZZY_THR    = 40
-ID_SIM_THRESHOLD     = 80           # jos innovation_id-parin fuzz ≥80 % → kandidaatti
-DESC_MAXLEN          = 800          # tekstiä promptiin / kuvaus
+DEFAULT_INPUT = "filtered_innovations.json"
+DEFAULT_MERGED_OUT = "merged_innovations.json"
+DEFAULT_SINGLES_OUT = "singles.json"
+DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_BATCH_SIZE = 20
+DEFAULT_FUZZY_THR = 40
+ID_SIM_THRESHOLD = 80           # jos innovation_id-parin fuzz ≥80 % → kandidaatti
+DESC_MAXLEN = 800          # tekstiä promptiin / kuvaus
 
 # ─────────────────────────────  LLM-alustus  ────────────────────────────────
 
@@ -46,7 +50,7 @@ def init_llm(deployment: str) -> AzureChatOpenAI:
     return AzureChatOpenAI(
         model=deployment,
         api_key=cfg["api_key"],
-        deployment_name=cfg["deployment"],
+        deployment_name=cfg["deployment"],  # type: ignore[arg-type]
         azure_endpoint=cfg["api_base"],
         api_version=cfg["api_version"],
     )
@@ -110,15 +114,18 @@ def _llm_batch(
     if mode == "summary":
         header = ("For every numbered pair, answer ONLY YES, NO or UNSURE "
                   "(e.g. '1 YES'). Decide *solely* from the two summaries.")
-        def left(i):  return _clean(entries[i]["core_summary"])
+
+        def left(i): return _clean(entries[i]["core_summary"])
         def right(j): return _clean(entries[j]["core_summary"])
     else:  # descriptions
         header = ("For every numbered pair, answer ONLY YES, NO or UNSURE "
                   "(e.g. '1 YES'). Decide from the two text snippets.")
+
         def _first_desc(idx: int) -> str:
             d = entries[idx].get("descriptions", [])
             return _clean(d[0]["text"] if d else "", DESC_MAXLEN)
-        def left(i):  return _first_desc(i)
+
+        def left(i): return _first_desc(i)
         def right(j): return _first_desc(j)
 
     lines = []
@@ -126,7 +133,7 @@ def _llm_batch(
         lines.append(f"{k}. {left(i)} ### {right(j)}")
     prompt = header + "\n\n" + "\n".join(lines)
 
-    resp = llm.invoke(prompt).content.strip().splitlines()
+    resp = llm.invoke(prompt).content.strip().splitlines()  # type: ignore
     out: List[str] = []
     for line in resp:
         token = line.strip().split()[-1].upper()
@@ -193,7 +200,8 @@ def cluster(
         groups[uf.find(idx)].append(idx)
 
     clusters = [g for g in groups.values() if len(g) > 1]
-    singles  = [g[0] for g in groups.values() if len(g) == 1]
+    singles = [g[0] for g in groups.values() if len(g) == 1]
+
     return clusters, singles
 
 
@@ -227,13 +235,11 @@ def run_deduplication_pipeline(
     normalise_ids(data)                           # 1) ID-passi
     clusters, singles = cluster(data, llm, batch_size=batch_size)  # 2–3
 
-    merged   = [merge_cluster(c, data) for c in clusters]
+    merged = [merge_cluster(c, data) for c in clusters]
     singles_ = [data[i] for i in singles]
 
-    with open(merged_out,  "w", encoding="utf-8") as f:
-        json.dump(merged,  f, indent=2, ensure_ascii=False)
-    with open(singles_out, "w", encoding="utf-8") as f:
-        json.dump(singles_, f, indent=2, ensure_ascii=False)
+    write_json_and_track(merged_out, merged)
+    write_json_and_track(singles_out, singles_)
 
     print("\n✅  Dedup-pipeline valmis")
     print("   Entries käsitelty :", len(data))
@@ -248,20 +254,23 @@ deduplicate_innovations = run_deduplication_pipeline
 
 # ───────────────────────────────  CLI  ───────────────────────────────────────
 
+
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Merge innovation entries via 2-phase LLM")
+
+    p = argparse.ArgumentParser(
+        description="Merge innovation entries via 2-phase LLM")
     p.add_argument("--input",      default=DEFAULT_INPUT)
     p.add_argument("--merged_out", default=DEFAULT_MERGED_OUT)
-    p.add_argument("--singles_out",default=DEFAULT_SINGLES_OUT)
+    p.add_argument("--singles_out", default=DEFAULT_SINGLES_OUT)
     p.add_argument("--model",      default=DEFAULT_MODEL)
     p.add_argument("--batch", type=int, default=DEFAULT_BATCH_SIZE,
                    help="Pair batch-size per LLM call")
     args = p.parse_args()
 
     run_deduplication_pipeline(
-        input_path  = args.input,
-        merged_out  = args.merged_out,
-        singles_out = args.singles_out,
-        model_name  = args.model,
-        batch_size  = args.batch,
+        input_path=args.input,
+        merged_out=args.merged_out,
+        singles_out=args.singles_out,
+        model_name=args.model,
+        batch_size=args.batch,
     )
