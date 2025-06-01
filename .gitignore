@@ -14,3 +14,5 @@ vat_resolution_log.json
 merged_innovations.json
 filtered_innovations.json
 deduplicated_innovations.json
+singles.json
+lib/

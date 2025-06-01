@@ -73,7 +73,8 @@ def clean(text: str) -> str:
 
 def _llm_binary(question: str, model: AzureChatOpenAI) -> str:
     """Ask LLM a STRICT YES / NO / UNSURE question."""
-    prompt = "Answer STRICTLY with YES, NO, or UNSURE (no extra words).\n" + question
+    prompt = "Answer STRICTLY with YES, NO, or UNSURE (no extra words).\n" + \
+        question
     reply = model.invoke(prompt).content.strip().upper()
     if reply.startswith("YES"):
         return "YES"
@@ -158,8 +159,10 @@ def cluster(
     for idx in range(n):
         clusters_map[find(idx)].append(idx)
 
-    clusters = [members for members in clusters_map.values() if len(members) > 1]
-    singles = [members[0] for members in clusters_map.values() if len(members) == 1]
+    clusters = [members for members in clusters_map.values()
+                if len(members) > 1]
+    singles = [members[0]
+               for members in clusters_map.values() if len(members) == 1]
     return clusters, singles
 
 
@@ -216,13 +219,17 @@ def run_deduplication_pipeline(
 # CLI
 # ────────────────────────────────────────────────────────────────────────────────
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Merge innovation entries via LLM (chunked)")
+    parser = argparse.ArgumentParser(
+        description="Merge innovation entries via LLM (chunked)")
     parser.add_argument("--input", default="filtered_innovations.json")
     parser.add_argument("--merged_out", default="merged_innovations.json")
     parser.add_argument("--singles_out", default="singles.json")
     parser.add_argument("--model", default="gpt-4.1-mini")
-    parser.add_argument("--chunk", type=int, default=10, help="Number of records per chunk")
+    parser.add_argument("--chunk", type=int, default=10,
+                        help="Number of records per chunk")
     args = parser.parse_args()
 
-    run_deduplication_pipeline(args.input, args.merged_out, args.singles_out, args.model, args.chunk)
+    run_deduplication_pipeline(
+        args.input, args.merged_out, args.singles_out, args.model, args.chunk)
