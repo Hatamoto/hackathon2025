@@ -24,13 +24,20 @@ structured_innovations.json
 -   this is our json structured cleaned project database with collaborators and sources. vat ids are inferred from llm model
     for temp_xxx ids.
 
+normalized_entity_glossary.json
+resolved_entity_glossary.json
+
+-   work files for saving inferred collaborator data.
+    the code skips these steps if these files are present,
+    so delete them to see the action.
+
 filtered_innovations.json
 
 deduplicated_innovations.json
 
 merged_innovations.json
 
--   stages of deduplication where we first filter, then deduplicate and merge sources to generate deduplicated data
+-   stages of deduplication where we first filter, then deduplicate and merge sources to generate deduplicated data.
 
 vtt_network_graph.png
 
