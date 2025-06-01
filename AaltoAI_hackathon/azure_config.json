@@ -1,5 +1,44 @@
-{"gpt-4o-mini": {"api_base": "https://nemotestsite6352258531.openai.azure.com/", "api_version": "2024-08-01-preview", "api_key": "94EnoMgULf26DP7VwaoPoLcMgefH8N7vwbtsA0Ju2mWBYGdiF9aTJQQJ99BBACfhMk5XJ3w3AAAAACOGHKT0", "deployment": "gpt-4o-mini", "eval_deployment": "gpt-4o-mini", "emb_deployment": "text-embedding-3-large"},  
- "gpt-4.1-mini": {"api_base": "https://aaltoaihack25-resource.cognitiveservices.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2025-01-01-preview", "api_version": "2024-12-01-preview", "api_key": "3Z8vOgQIhhs29mRnMj3ungmDtMB8y537ZNYJBKwPW4MQafNFBqUQJQQJ99BEACfhMk5XJ3w3AAAAACOGFKqq", "deployment": "gpt-4.1-mini", "eval_deployment": "gpt-4.1-mini", "emb_deployment": "text-embedding-3-large"}, 
- "gpt-4.1": {"api_base": "https://richa-m7ni7kby-eastus2.openai.azure.com/", "api_version": "2024-12-01-preview", "api_key": "DqACKsCLyfo6ikRj7wVDecJmdA2fv3kW9IQ9smsS5LkzjSJ0C3DDJQQJ99BBACHYHv6XJ3w3AAAAACOGXaAj", "deployment": "gpt-4.1", "eval_deployment": "gpt-4.1", "emb_deployment": "text-embedding-3-large"},
- "INPUT": {"first_order_k": 10, "second_order_k": 15, "temperature": 0.01, "validity_threshold": 0.4, "aggregation_threshold": 0.5}}
+{
+  "gpt-4o-mini": {
+    "api_base":    "https://nemotestsite6352258531.openai.azure.com/",
+    "api_version": "2024-08-01-preview",
+    "api_key":     "94EnoMgULf26DP7VwaoPoLcMgefH8N7vwbtsA0Ju2mWBYGdiF9aTJQQJ99BBACfhMk5XJ3w3AAAAACOGHKT0",
+    "deployment":  "gpt-4o-mini",
+    "eval_deployment": "gpt-4o-mini",
+    "emb_deployment":  "text-embedding-3-small"
+  },
+
+  "gpt-4.1-mini": {
+    "api_base":    "https://aaltoaihack25-resource.openai.azure.com/",
+    "api_version": "2025-01-01-preview",
+    "api_key":     "3Z8vOgQIhhs29mRnMj3ungmDtMB8y537ZNYJBKwPW4MQafNFBqUQJQQJ99BEACfhMk5XJ3w3AAAAACOGFKqq",
+    "deployment":  "gpt-4.1-mini",
+    "eval_deployment": "gpt-4.1-mini",
+    "emb_deployment":  "text-embedding-3-small"
+  },
+
+  "gpt-4.1": {
+    "api_base":    "https://richa-m7ni7kby-eastus2.openai.azure.com/",
+    "api_version": "2024-12-01-preview",
+    "api_key":     "DqACKsCLyfo6ikRj7wVDecJmdA2fv3kW9IQ9smsS5LkzjSJ0C3DDJQQJ99BBACHYHv6XJ3w3AAAAACOGXaAj",
+    "deployment":  "gpt-4.1",
+    "eval_deployment": "gpt-4.1",
+    "emb_deployment":  "text-embedding-3-small"
+  },
+
+  "text-embedding-3-large": {
+	"api_base": "https://nemotestsite6352258531.openai.azure.com/",
+	"api_version": "2024-08-01-preview",
+	"api_key": "94EnoMgULf26DP7VwaoPoLcMgefH8N7vwbtsA0Ju2mWBYGdiF9aTJQQJ99BBACfhMk5XJ3w3AAAAACOGHKT0",
+	"deployment": "text-embedding-3-large"
+	},
+
+  "INPUT": {
+    "first_order_k":        10,
+    "second_order_k":       15,
+    "temperature":          0.01,
+    "validity_threshold":   0.4,
+    "aggregation_threshold":0.5
+  }
+}
 

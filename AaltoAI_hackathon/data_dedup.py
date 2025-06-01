@@ -1,228 +1,267 @@
 from __future__ import annotations
+"""
+AI-assisted merger (v2.3, 9 Jun 2025)
 
-"""AI‑assisted merger of innovation entries (chunked version)
-
-Processes the input JSON in **chunks of 10 records** so that we never feed a
-huge comparison matrix to the LLM at once. After every chunk the script prints
-progress in real time.
-
-Outputs
-=======
-• ``merged_innovations.json``  – aggregated records (≥2 sources)
-• ``singles.json``             – entries that stayed solitary
-
-Run example
------------
-::
-
-    python innovation_merger.py \
-        --input filtered_innovations.json \
-        --chunk 10 \
-        --model gpt-4.1-mini
+• ID-normalisointi ennen klusterointia (fuzzy-match → sama innovation_id)
+• 2-tason LLM-varmistus:
+    1) core_summary      2) tarvittaessa descriptions
+• Blocking + RapidFuzz quick filter → LLM-kutsut vain relevantteihin pareihin
+• Batch-kyselyt (≤20 paria)         → 5–10 × vähemmän round-tripejä
+• Tulosteet: merged_innovations.json  &  singles.json
 """
 
-import argparse
-import json
-import os
-import re
-from collections import defaultdict
+import argparse, json, os, re, textwrap
 from itertools import combinations
+from collections import defaultdict
 from typing import Dict, List, Tuple
 
 from dotenv import load_dotenv
+from rapidfuzz import fuzz
 from langchain_openai import AzureChatOpenAI
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Helpers: configuration & LLM init
-# ────────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────  Oletusarvot  ────────────────────────────────
+
+DEFAULT_INPUT        = "filtered_innovations.json"
+DEFAULT_MERGED_OUT   = "merged_innovations.json"
+DEFAULT_SINGLES_OUT  = "singles.json"
+DEFAULT_MODEL        = "gpt-4.1-mini"
+DEFAULT_BATCH_SIZE   = 20
+DEFAULT_FUZZY_THR    = 40
+ID_SIM_THRESHOLD     = 80           # jos innovation_id-parin fuzz ≥80 % → kandidaatti
+DESC_MAXLEN          = 800          # tekstiä promptiin / kuvaus
+
+# ─────────────────────────────  LLM-alustus  ────────────────────────────────
 
 load_dotenv()
-
-CONFIG_FILE = "azure_config.json"
-
-
-def load_config(path: str = CONFIG_FILE) -> Dict:
-    with open(path, "r", encoding="utf-8") as fp:
-        return json.load(fp)
+CFG_FILE = "azure_config.json"
 
 
-def init_llm(deployment: str, config_path: str = CONFIG_FILE) -> AzureChatOpenAI:
-    cfg = load_config(config_path)[deployment]
+def _load_cfg(deployment: str, path: str = CFG_FILE) -> Dict:
+    with open(path, encoding="utf-8") as fp:
+        return json.load(fp)[deployment]
+
+
+def init_llm(deployment: str) -> AzureChatOpenAI:
+    cfg = _load_cfg(deployment)
     return AzureChatOpenAI(
         model=deployment,
         api_key=cfg["api_key"],
-        deployment_name=cfg["deployment"],  # type: ignore[arg-type]
+        deployment_name=cfg["deployment"],
         azure_endpoint=cfg["api_base"],
         api_version=cfg["api_version"],
     )
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Utility
-# ────────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────  Apufunktiot  ────────────────────────────────
 
 
-def clean(text: str) -> str:
-    """Normalise whitespace; shrink very long text for prompts."""
-    text = re.sub(r"\s+", " ", text or "").strip()
-    return text[:1500]  # keep prompt under control
-
-# ────────────────────────────────────────────────────────────────────────────────
-# LLM based comparators
-# ────────────────────────────────────────────────────────────────────────────────
+def _slug(txt: str) -> str:
+    return re.sub(r"\W+", "", (txt or "")).lower()[:40]
 
 
-def _llm_binary(question: str, model: AzureChatOpenAI) -> str:
-    """Ask LLM a STRICT YES / NO / UNSURE question."""
-    prompt = "Answer STRICTLY with YES, NO, or UNSURE (no extra words).\n" + question
-    reply = model.invoke(prompt).content.strip().upper()
-    if reply.startswith("YES"):
-        return "YES"
-    if reply.startswith("NO"):
-        return "NO"
-    return "UNSURE"
+def _clean(txt: str, maxlen: int = 800) -> str:
+    return re.sub(r"\s+", " ", txt or "").strip()[:maxlen]
+
+# ─────────────────────────────  Union–Find  ──────────────────────────────────
 
 
-def same_by_core_summary(a: Dict, b: Dict, model: AzureChatOpenAI) -> str:
-    q = (
-        "Are these two core summaries about the identical innovation?\n\n"
-        f"1. {clean(a['core_summary'])}\n\n2. {clean(b['core_summary'])}"
-    )
-    return _llm_binary(q, model)
+class UF:
+    def __init__(self, n: int):
+        self.p = list(range(n))
+
+    def find(self, i: int) -> int:
+        while self.p[i] != i:
+            self.p[i] = self.p[self.p[i]]
+            i = self.p[i]
+        return i
+
+    def union(self, i: int, j: int) -> None:
+        ri, rj = self.find(i), self.find(j)
+        if ri != rj:
+            self.p[rj] = ri
+
+# ──────────────────  1) ID-normalisointi-passi  ──────────────────────────────
 
 
-def same_by_descriptions(a: Dict, b: Dict, model: AzureChatOpenAI) -> str:
-    desc_a = " ".join(clean(d["text"]) for d in a.get("descriptions", [])[:2])
-    desc_b = " ".join(clean(d["text"]) for d in b.get("descriptions", [])[:2])
-    q = (
-        "Are these two paragraphs describing the same innovation?\n\n"
-        f"PARAGRAPH A:\n{desc_a}\n\nPARAGRAPH B:\n{desc_b}"
-    )
-    return _llm_binary(q, model)
+def normalise_ids(data: List[Dict]) -> None:
+    """Jos uusi ID ~ samanlainen kuin aiempi, korvataan kanonisella."""
+    canon: List[str] = []
+    for rec in data:
+        raw = rec.get("innovation_id") or ""
+        best, score = None, 0
+        for cid in canon:
+            sc = fuzz.token_set_ratio(raw, cid)
+            if sc > score:
+                best, score = cid, sc
+        if best and score >= ID_SIM_THRESHOLD:
+            rec["innovation_id"] = best
+        else:
+            canon.append(raw)
+
+# ────────────────────── 2) LLM-pohjainen vertailu  ───────────────────────────
 
 
-def is_same_innovation(a: Dict, b: Dict, model: AzureChatOpenAI) -> bool:
-    """Two‑stage decision: core summary first; if UNSURE then use descriptions."""
-    first = same_by_core_summary(a, b, model)
-    if first == "YES":
-        return True
-    if first == "NO":
-        return False
-    # fallback: use richer context
-    second = same_by_descriptions(a, b, model)
-    return second == "YES"
+def _llm_batch(
+    pairs: List[Tuple[int, int]],
+    entries: List[Dict],
+    llm: AzureChatOpenAI,
+    mode: str = "summary",
+) -> List[str]:
+    """Palauttaa YES/NO/UNSURE listan. mode = summary | desc"""
+    if mode == "summary":
+        header = ("For every numbered pair, answer ONLY YES, NO or UNSURE "
+                  "(e.g. '1 YES'). Decide *solely* from the two summaries.")
+        def left(i):  return _clean(entries[i]["core_summary"])
+        def right(j): return _clean(entries[j]["core_summary"])
+    else:  # descriptions
+        header = ("For every numbered pair, answer ONLY YES, NO or UNSURE "
+                  "(e.g. '1 YES'). Decide from the two text snippets.")
+        def _first_desc(idx: int) -> str:
+            d = entries[idx].get("descriptions", [])
+            return _clean(d[0]["text"] if d else "", DESC_MAXLEN)
+        def left(i):  return _first_desc(i)
+        def right(j): return _first_desc(j)
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Core clustering logic (chunk‑aware)
-# ────────────────────────────────────────────────────────────────────────────────
+    lines = []
+    for k, (i, j) in enumerate(pairs, 1):
+        lines.append(f"{k}. {left(i)} ### {right(j)}")
+    prompt = header + "\n\n" + "\n".join(lines)
+
+    resp = llm.invoke(prompt).content.strip().splitlines()
+    out: List[str] = []
+    for line in resp:
+        token = line.strip().split()[-1].upper()
+        out.append(token if token in {"YES", "NO", "UNSURE"} else "UNSURE")
+    while len(out) < len(pairs):
+        out.append("UNSURE")
+    return out
+
+# ───────────────────────────── 3) Klusterointi  ──────────────────────────────
 
 
 def cluster(
     entries: List[Dict],
-    model: AzureChatOpenAI,
-    chunk_size: int = 10,
+    llm: AzureChatOpenAI,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    fuzzy_thr: int = DEFAULT_FUZZY_THR,
 ) -> Tuple[List[List[int]], List[int]]:
-    """Union–Find clustering with progress printed per *chunk_size* items."""
     n = len(entries)
-    parent = list(range(n))  # Union‑Find disjoint‑set
+    uf = UF(n)
 
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
+    # 3.1 Blocking slug
+    buckets: Dict[str, List[int]] = defaultdict(list)
+    for idx, rec in enumerate(entries):
+        buckets[_slug(rec["innovation_id"])].append(idx)
 
-    def union(i: int, j: int) -> None:
-        ri, rj = find(i), find(j)
-        if ri != rj:
-            parent[rj] = ri
+    # 3.2 Nopean fuzzy-suotimen parit
+    candidate_pairs: List[Tuple[int, int]] = []
+    for idxs in buckets.values():
+        if len(idxs) < 2:
+            continue
+        for i, j in combinations(idxs, 2):
+            if fuzz.token_set_ratio(
+                entries[i]["core_summary"], entries[j]["core_summary"]
+            ) >= fuzzy_thr:
+                candidate_pairs.append((i, j))
 
-    total_chunks = (n + chunk_size - 1) // chunk_size
+    print(f"🧮  LLM-vertailtavia pareja: {len(candidate_pairs):,}")
 
-    for chunk_idx, start in enumerate(range(0, n, chunk_size)):
-        end = min(start + chunk_size, n)
-        print(
-            f"Processing chunk {chunk_idx + 1}/{total_chunks} (records {start}-{end - 1})…",
-            flush=True,
-        )
+    # 3.3 1. erä – summary
+    for start in range(0, len(candidate_pairs), batch_size):
+        batch = candidate_pairs[start:start + batch_size]
+        labs = _llm_batch(batch, entries, llm, mode="summary")
 
-        # Compare every record in current chunk against ALL *following* records
-        for i in range(start, end):
-            for j in range(i + 1, n):  # includes future chunks → full coverage
-                if find(i) == find(j):
-                    continue  # already same cluster
-                if is_same_innovation(entries[i], entries[j], model):
-                    union(i, j)
+        # kerää UNSURE-parit fallbackia varten
+        unsure_pairs = [p for p, l in zip(batch, labs) if l == "UNSURE"]
 
-    # Build cluster list / singles list
-    clusters_map: Dict[int, List[int]] = defaultdict(list)
+        # yhdistä YES
+        for (i, j), lab in zip(batch, labs):
+            if lab == "YES":
+                uf.union(i, j)
+
+        if not unsure_pairs:
+            continue  # nopea
+
+        # 3.4 2. erä – descriptions
+        desc_labels = _llm_batch(unsure_pairs, entries, llm, mode="desc")
+        for (i, j), lab in zip(unsure_pairs, desc_labels):
+            if lab == "YES":
+                uf.union(i, j)
+
+    # 3.5 Ryhmittely tulokseksi
+    groups: Dict[int, List[int]] = defaultdict(list)
     for idx in range(n):
-        clusters_map[find(idx)].append(idx)
+        groups[uf.find(idx)].append(idx)
 
-    clusters = [members for members in clusters_map.values() if len(members) > 1]
-    singles = [members[0] for members in clusters_map.values() if len(members) == 1]
+    clusters = [g for g in groups.values() if len(g) > 1]
+    singles  = [g[0] for g in groups.values() if len(g) == 1]
     return clusters, singles
 
 
-def merge_cluster(cluster_indices: List[int], entries: List[Dict]) -> Dict:
-    """Aggregate multiple source entries into one."""
-    base = entries[cluster_indices[0]].copy()
-    for idx in cluster_indices[1:]:
-        rec = entries[idx]
-        # union participants
+def merge_cluster(idxs: List[int], data: List[Dict]) -> Dict:
+    base = data[idxs[0]].copy()
+    for k in idxs[1:]:
+        rec = data[k]
         seen = {tuple(p) for p in base.get("participants", [])}
         for p in rec.get("participants", []):
             if tuple(p) not in seen:
                 base.setdefault("participants", []).append(p)
                 seen.add(tuple(p))
-        # extend descriptions
         base.setdefault("descriptions", []).extend(rec.get("descriptions", []))
     return base
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Pipeline driver
-# ────────────────────────────────────────────────────────────────────────────────
+# ───────────────────────────  Pipeline driver  ───────────────────────────────
 
 
 def run_deduplication_pipeline(
-    input_path: str,
-    merged_out: str,
-    singles_out: str,
-    model_name: str,
-    chunk_size: int,
+    input_path:  str = DEFAULT_INPUT,
+    merged_out:  str = DEFAULT_MERGED_OUT,
+    singles_out: str = DEFAULT_SINGLES_OUT,
+    model_name:  str = DEFAULT_MODEL,
+    batch_size:  int = DEFAULT_BATCH_SIZE,
 ) -> None:
     llm = init_llm(model_name)
 
-    with open(input_path, "r", encoding="utf-8") as fp:
-        data = json.load(fp)
+    with open(input_path, encoding="utf-8") as f:
+        data = json.load(f)
 
-    clusters, singles_idx = cluster(data, llm, chunk_size)
+    normalise_ids(data)                           # 1) ID-passi
+    clusters, singles = cluster(data, llm, batch_size=batch_size)  # 2–3
 
-    merged_records = [merge_cluster(c, data) for c in clusters]
-    single_records = [data[i] for i in singles_idx]
+    merged   = [merge_cluster(c, data) for c in clusters]
+    singles_ = [data[i] for i in singles]
 
-    with open(merged_out, "w", encoding="utf-8") as fp:
-        json.dump(merged_records, fp, indent=2, ensure_ascii=False)
-    with open(singles_out, "w", encoding="utf-8") as fp:
-        json.dump(single_records, fp, indent=2, ensure_ascii=False)
+    with open(merged_out,  "w", encoding="utf-8") as f:
+        json.dump(merged,  f, indent=2, ensure_ascii=False)
+    with open(singles_out, "w", encoding="utf-8") as f:
+        json.dump(singles_, f, indent=2, ensure_ascii=False)
 
-    # ── stats ────────────────────────────────────────────────────────────
-    print("Processed entries:", len(data))
-    print("Clusters formed  :", len(clusters))
-    print("Records merged   :", sum(len(c) for c in clusters))
-    print("Singles left     :", len(single_records))
-    print("→", merged_out, "/", singles_out)
+    print("\n✅  Dedup-pipeline valmis")
+    print("   Entries käsitelty :", len(data))
+    print("   Klustereita       :", len(clusters))
+    print("   Yhdistettyjä      :", sum(len(c) for c in clusters))
+    print("   Singles           :", len(singles_))
+    print("   →", merged_out, "/", singles_out)
 
-# ────────────────────────────────────────────────────────────────────────────────
-# CLI
-# ────────────────────────────────────────────────────────────────────────────────
+
+# Alias vanhoille importeille
+deduplicate_innovations = run_deduplication_pipeline
+
+# ───────────────────────────────  CLI  ───────────────────────────────────────
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Merge innovation entries via LLM (chunked)")
-    parser.add_argument("--input", default="filtered_innovations.json")
-    parser.add_argument("--merged_out", default="merged_innovations.json")
-    parser.add_argument("--singles_out", default="singles.json")
-    parser.add_argument("--model", default="gpt-4.1-mini")
-    parser.add_argument("--chunk", type=int, default=10, help="Number of records per chunk")
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description="Merge innovation entries via 2-phase LLM")
+    p.add_argument("--input",      default=DEFAULT_INPUT)
+    p.add_argument("--merged_out", default=DEFAULT_MERGED_OUT)
+    p.add_argument("--singles_out",default=DEFAULT_SINGLES_OUT)
+    p.add_argument("--model",      default=DEFAULT_MODEL)
+    p.add_argument("--batch", type=int, default=DEFAULT_BATCH_SIZE,
+                   help="Pair batch-size per LLM call")
+    args = p.parse_args()
 
-    run_deduplication_pipeline(args.input, args.merged_out, args.singles_out, args.model, args.chunk)
+    run_deduplication_pipeline(
+        input_path  = args.input,
+        merged_out  = args.merged_out,
+        singles_out = args.singles_out,
+        model_name  = args.model,
+        batch_size  = args.batch,
+    )
