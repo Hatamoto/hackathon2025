@@ -225,4 +225,4 @@ if __name__ == "__main__":
     parser.add_argument("--chunk", type=int, default=10, help="Number of records per chunk")
     args = parser.parse_args()
 
-    run(args.input, args.merged_out, args.singles_out, args.model, args.chunk)
+    run_deduplication_pipeline(args.input, args.merged_out, args.singles_out, args.model, args.chunk)

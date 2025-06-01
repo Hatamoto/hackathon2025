@@ -526,11 +526,23 @@ else:
     print(
         f"✅ Saved {len(output)} unique innovation objects to structured_innovations.json")
 
+DEDUP_INPUT       = "filtered_innovations.json"   # ← syntyy filter-vaiheessa
+DEDUP_MERGED_OUT  = "merged_innovations.json"     # klusteroidut + yhdistetyt
+DEDUP_SINGLES_OUT = "singles.json"               # yksittäiset, ei-duplikaatit
+DEDUP_MODEL       = "gpt-4.1-mini"               # sama deployment-alias kuin .env
+DEDUP_CHUNK_SIZE  = 10                           # tai esim. 50/1000 tarpeen mukaan
+
 # Run filtering pipeline
 filter_innovations_file()
 
 # Run deduplication pipeline
-run_deduplication_pipeline()
+run_deduplication_pipeline(
+    input_path   = DEDUP_INPUT,
+    merged_out   = DEDUP_MERGED_OUT,
+    singles_out  = DEDUP_SINGLES_OUT,
+    model_name   = DEDUP_MODEL,
+    chunk_size   = DEDUP_CHUNK_SIZE,
+)
 
 draw_graph = False  # Set to True if you want to visualize the graph
 
