@@ -1,184 +1,228 @@
+from __future__ import annotations
+
+"""AI‑assisted merger of innovation entries (chunked version)
+
+Processes the input JSON in **chunks of 10 records** so that we never feed a
+huge comparison matrix to the LLM at once. After every chunk the script prints
+progress in real time.
+
+Outputs
+=======
+• ``merged_innovations.json``  – aggregated records (≥2 sources)
+• ``singles.json``             – entries that stayed solitary
+
+Run example
+-----------
+::
+
+    python innovation_merger.py \
+        --input filtered_innovations.json \
+        --chunk 10 \
+        --model gpt-4.1-mini
+"""
+
+import argparse
 import json
-import re
 import os
+import re
+from collections import defaultdict
+from itertools import combinations
+from typing import Dict, List, Tuple
+
 from dotenv import load_dotenv
 from langchain_openai import AzureChatOpenAI
 
-# Load environment variables from .env file
+# ────────────────────────────────────────────────────────────────────────────────
+# Helpers: configuration & LLM init
+# ────────────────────────────────────────────────────────────────────────────────
+
 load_dotenv()
 
-# Function to load the configuration from a file
+CONFIG_FILE = "azure_config.json"
 
 
-def load_config(config_file_path: str = 'azure_config.json'):
-    with open(config_file_path, 'r') as jsonfile:
-        config = json.load(jsonfile)
-    return config
-
-# Function to initialize the LLM
+def load_config(path: str = CONFIG_FILE) -> Dict:
+    with open(path, "r", encoding="utf-8") as fp:
+        return json.load(fp)
 
 
-def initialize_llm(deployment_model: str, config_file_path: str = 'azure_config.json') -> AzureChatOpenAI:
-    with open(config_file_path, 'r') as jsonfile:
-        config = json.load(jsonfile)
-
-    model_config = config.get(deployment_model)
-    if not model_config:
-        raise ValueError(f"Model '{deployment_model}' not found in config")
-
+def init_llm(deployment: str, config_path: str = CONFIG_FILE) -> AzureChatOpenAI:
+    cfg = load_config(config_path)[deployment]
     return AzureChatOpenAI(
-        model=deployment_model,
-        api_key=model_config['api_key'],
-        deployment_name=model_config['deployment'],  # type: ignore[call-arg]
-        azure_endpoint=model_config['api_base'],
-        api_version=model_config['api_version'],
+        model=deployment,
+        api_key=cfg["api_key"],
+        deployment_name=cfg["deployment"],  # type: ignore[arg-type]
+        azure_endpoint=cfg["api_base"],
+        api_version=cfg["api_version"],
     )
 
-# Function to detect and filter out irrelevant content
+# ────────────────────────────────────────────────────────────────────────────────
+# Utility
+# ────────────────────────────────────────────────────────────────────────────────
 
 
-def filter_text(text):
-    text = re.sub(r'\s+', ' ', text).strip()
-    if len(text) < 80:  # Skip short content that might just be noise
-        return None
-    return text
+def clean(text: str) -> str:
+    """Normalise whitespace; shrink very long text for prompts."""
+    text = re.sub(r"\s+", " ", text or "").strip()
+    return text[:1500]  # keep prompt under control
 
-# Function to check if two descriptions are duplicates using AI
+# ────────────────────────────────────────────────────────────────────────────────
+# LLM based comparators
+# ────────────────────────────────────────────────────────────────────────────────
 
 
-def check_if_duplicate(description_1, description_2, model):
-    try:
-        prompt = f"Are the following two descriptions about the same innovation? If yes, explain why. If not, explain the differences.\n\nDescription 1: {description_1}\n\nDescription 2: {description_2}"
-        response = model.invoke(prompt)
+def _llm_binary(question: str, model: AzureChatOpenAI) -> str:
+    """Ask LLM a STRICT YES / NO / UNSURE question."""
+    prompt = "Answer STRICTLY with YES, NO, or UNSURE (no extra words).\n" + question
+    reply = model.invoke(prompt).content.strip().upper()
+    if reply.startswith("YES"):
+        return "YES"
+    if reply.startswith("NO"):
+        return "NO"
+    return "UNSURE"
 
-        response_text = response.content.strip().lower()
-        if "same" in response_text or "similar" in response_text:
-            return True
+
+def same_by_core_summary(a: Dict, b: Dict, model: AzureChatOpenAI) -> str:
+    q = (
+        "Are these two core summaries about the identical innovation?\n\n"
+        f"1. {clean(a['core_summary'])}\n\n2. {clean(b['core_summary'])}"
+    )
+    return _llm_binary(q, model)
+
+
+def same_by_descriptions(a: Dict, b: Dict, model: AzureChatOpenAI) -> str:
+    desc_a = " ".join(clean(d["text"]) for d in a.get("descriptions", [])[:2])
+    desc_b = " ".join(clean(d["text"]) for d in b.get("descriptions", [])[:2])
+    q = (
+        "Are these two paragraphs describing the same innovation?\n\n"
+        f"PARAGRAPH A:\n{desc_a}\n\nPARAGRAPH B:\n{desc_b}"
+    )
+    return _llm_binary(q, model)
+
+
+def is_same_innovation(a: Dict, b: Dict, model: AzureChatOpenAI) -> bool:
+    """Two‑stage decision: core summary first; if UNSURE then use descriptions."""
+    first = same_by_core_summary(a, b, model)
+    if first == "YES":
+        return True
+    if first == "NO":
         return False
-    except Exception as e:
-        print(f"Error during AI comparison: {e}")
-        return False
+    # fallback: use richer context
+    second = same_by_descriptions(a, b, model)
+    return second == "YES"
 
-# Function to process descriptions in chunks and handle deduplication
-def process_descriptions_in_chunks(data, model, chunk_size=20):
-    filtered_data = []
-    seen_texts = []  # List to track descriptions for de-duplication using AI
-    innovation_map = {}  # A map to store potential duplicates and their unified innovation_id
+# ────────────────────────────────────────────────────────────────────────────────
+# Core clustering logic (chunk‑aware)
+# ────────────────────────────────────────────────────────────────────────────────
 
-    # Process data in chunks
-    for i in range(0, len(data), chunk_size):
-        chunk = data[i:i+chunk_size]
+
+def cluster(
+    entries: List[Dict],
+    model: AzureChatOpenAI,
+    chunk_size: int = 10,
+) -> Tuple[List[List[int]], List[int]]:
+    """Union–Find clustering with progress printed per *chunk_size* items."""
+    n = len(entries)
+    parent = list(range(n))  # Union‑Find disjoint‑set
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[rj] = ri
+
+    total_chunks = (n + chunk_size - 1) // chunk_size
+
+    for chunk_idx, start in enumerate(range(0, n, chunk_size)):
+        end = min(start + chunk_size, n)
         print(
-            f"Processing chunk {i//chunk_size + 1}/{(len(data) + chunk_size - 1) // chunk_size}")
+            f"Processing chunk {chunk_idx + 1}/{total_chunks} (records {start}-{end - 1})…",
+            flush=True,
+        )
 
-        # Process each record in the chunk
-        for record in chunk:
-            innovation_id = record.get("innovation_id")
-            core_summary = record.get("core_summary")
-            participants = record.get("participants")
+        # Compare every record in current chunk against ALL *following* records
+        for i in range(start, end):
+            for j in range(i + 1, n):  # includes future chunks → full coverage
+                if find(i) == find(j):
+                    continue  # already same cluster
+                if is_same_innovation(entries[i], entries[j], model):
+                    union(i, j)
 
-            filtered_descriptions = []
-            for description in record.get("descriptions", []):
-                source_text = description.get("text", "")
-                filtered_text = filter_text(source_text)
+    # Build cluster list / singles list
+    clusters_map: Dict[int, List[int]] = defaultdict(list)
+    for idx in range(n):
+        clusters_map[find(idx)].append(idx)
 
-                if filtered_text:
-                    is_duplicate = False
-                    matched_innovation_id = innovation_id  # Default to current innovation_id
-
-                    # Check if this description is a duplicate
-                    for seen_text, seen_id in seen_texts:
-                        if check_if_duplicate(filtered_text, seen_text, model):
-                            is_duplicate = True
-                            matched_innovation_id = seen_id  # Match the ID of the first seen description
-                            break
-
-                    if not is_duplicate:
-                        # If it's not a duplicate, add the description with its current innovation_id
-                        seen_texts.append((filtered_text, innovation_id))
-                    else:
-                        # If it's a duplicate, we update the innovation_id to the matched one
-                        innovation_id = matched_innovation_id
-
-                    # Add the description under the innovation_id
-                    filtered_descriptions.append({
-                        "source": description.get("source"),
-                        "text": filtered_text,
-                        "date": description.get("date", "unknown")
-                    })
-
-            if filtered_descriptions:
-                filtered_data.append({
-                    "innovation_id": innovation_id,
-                    "core_summary": core_summary,
-                    "participants": participants,
-                    "descriptions": filtered_descriptions
-                })
-    
-    return filtered_data
-
-# Function to merge descriptions for the same innovation_id
+    clusters = [members for members in clusters_map.values() if len(members) > 1]
+    singles = [members[0] for members in clusters_map.values() if len(members) == 1]
+    return clusters, singles
 
 
-def merge_innovations(filtered_data):
-    merged_data = []
-    innovation_map = {}
+def merge_cluster(cluster_indices: List[int], entries: List[Dict]) -> Dict:
+    """Aggregate multiple source entries into one."""
+    base = entries[cluster_indices[0]].copy()
+    for idx in cluster_indices[1:]:
+        rec = entries[idx]
+        # union participants
+        seen = {tuple(p) for p in base.get("participants", [])}
+        for p in rec.get("participants", []):
+            if tuple(p) not in seen:
+                base.setdefault("participants", []).append(p)
+                seen.add(tuple(p))
+        # extend descriptions
+        base.setdefault("descriptions", []).extend(rec.get("descriptions", []))
+    return base
 
-    # Group entries by innovation_id
-    for record in filtered_data:
-        innovation_id = record["innovation_id"]
-
-        if innovation_id not in innovation_map:
-            innovation_map[innovation_id] = {
-                "innovation_id": innovation_id,
-                "core_summary": record["core_summary"],
-                "participants": record["participants"],
-                "descriptions": []
-            }
-
-        # Add descriptions under the same innovation_id
-        for description in record["descriptions"]:
-            innovation_map[innovation_id]["descriptions"].append(description)
-
-    # Convert the innovation map to a list of merged records
-    for innovation_id, merged_record in innovation_map.items():
-        merged_data.append(merged_record)
-
-    return merged_data
-
-# Main function to process and de-duplicate innovations by context using AI
+# ────────────────────────────────────────────────────────────────────────────────
+# Pipeline driver
+# ────────────────────────────────────────────────────────────────────────────────
 
 
 def run_deduplication_pipeline(
-    input_file='filtered_innovations.json',
-    output_file_dedup='deduplicated_innovations.json',
-    output_file_merged='merged_innovations.json',
-    deployment_model='gpt-4.1-mini',
-    config_file_path='azure_config.json',
-    chunk_size=20
-):
-    # Load the configuration and model
-    config = load_config(config_file_path)
-    model = initialize_llm(deployment_model=deployment_model,
-                           config_file_path=config_file_path)
+    input_path: str,
+    merged_out: str,
+    singles_out: str,
+    model_name: str,
+    chunk_size: int,
+) -> None:
+    llm = init_llm(model_name)
 
-    # Read the filtered innovations file
-    with open(input_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    with open(input_path, "r", encoding="utf-8") as fp:
+        data = json.load(fp)
 
-    # Process and de-duplicate descriptions in chunks
-    filtered_data = process_descriptions_in_chunks(data, model, chunk_size=20)
+    clusters, singles_idx = cluster(data, llm, chunk_size)
 
-    # Save the deduplicated data to a new JSON file
-    with open(output_file_dedup, 'w', encoding='utf-8') as f:
-        json.dump(filtered_data, f, indent=2, ensure_ascii=False)
+    merged_records = [merge_cluster(c, data) for c in clusters]
+    single_records = [data[i] for i in singles_idx]
 
-    # Merge innovations by innovation_id
-    merged_data = merge_innovations(filtered_data)
+    with open(merged_out, "w", encoding="utf-8") as fp:
+        json.dump(merged_records, fp, indent=2, ensure_ascii=False)
+    with open(singles_out, "w", encoding="utf-8") as fp:
+        json.dump(single_records, fp, indent=2, ensure_ascii=False)
 
-    # Save the merged data to a new JSON file
-    with open(output_file_merged, 'w', encoding='utf-8') as f:
-        json.dump(merged_data, f, indent=2, ensure_ascii=False)
+    # ── stats ────────────────────────────────────────────────────────────
+    print("Processed entries:", len(data))
+    print("Clusters formed  :", len(clusters))
+    print("Records merged   :", sum(len(c) for c in clusters))
+    print("Singles left     :", len(single_records))
+    print("→", merged_out, "/", singles_out)
 
-    print(f"✅ De-duplicated data saved to {output_file_dedup}")
-    print(f"✅ Merged data saved to {output_file_merged}")
+# ────────────────────────────────────────────────────────────────────────────────
+# CLI
+# ────────────────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Merge innovation entries via LLM (chunked)")
+    parser.add_argument("--input", default="filtered_innovations.json")
+    parser.add_argument("--merged_out", default="merged_innovations.json")
+    parser.add_argument("--singles_out", default="singles.json")
+    parser.add_argument("--model", default="gpt-4.1-mini")
+    parser.add_argument("--chunk", type=int, default=10, help="Number of records per chunk")
+    args = parser.parse_args()
+
+    run(args.input, args.merged_out, args.singles_out, args.model, args.chunk)
