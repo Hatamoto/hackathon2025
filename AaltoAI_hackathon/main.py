@@ -11,6 +11,8 @@
 from draw_graph import build_graph_from_innovations
 from data_dedup import run_deduplication_pipeline
 from data_filter import filter_innovations_file
+from data_valid import run_final_validation
+from data_loop import dedup_until_converged
 import re
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -527,17 +529,11 @@ else:
     print(
         f"✅ Saved {len(output)} unique innovation objects to structured_innovations.json")
 
-# Run filtering pipeline
 filter_innovations_file()
 
-# Run deduplication pipeline
-run_deduplication_pipeline()
+dedup_until_converged(max_iter=10)
 
-print("\n🚀 Running text-cluster deduplication (data_cluster.py)…")
-subprocess.run([sys.executable, "data_cluster.py"], check=True)
-print("✅ text-cluster deduplication finished.")
-
-draw_graph = False  # Set to True if you want to visualize the graph
+draw_graph = True  # Set to True if you want to visualize the graph
 
 if draw_graph:
     build_graph_from_innovations()
