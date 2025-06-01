@@ -2,5 +2,6 @@
   "data/entity_glossary/entity_glossary.json": "3922e755d81e749d6e611e665859fc7ebb96a15fc369febcd89ef31347892ca6",
   "structured_innovations.json": "4a3ec278f2be7e0c2a608f229b3a7a8d132c71431a4ded4352c30661d29bb3e2",
   "merged_innovations.json": "f42c338610a92bac350473c2a191eb8da02a75f0bd73a74f1295761b174ecd1e",
-  "singles.json": "166656b73168b8cc3c6a18edbfcbca663196f28bfc74d24ed6c2faa470323e0f"
+  "singles.json": "166656b73168b8cc3c6a18edbfcbca663196f28bfc74d24ed6c2faa470323e0f",
+  "filtered_innovations.json": "3d9663eff6c247a301b1d20f203ea88a45cd54fc28b2a7f2cb15840b897c2926"
 }
